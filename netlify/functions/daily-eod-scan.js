@@ -1,12 +1,12 @@
 // POPPA'S Option Scanner v3 — scheduled CBOE EOD ingestion trigger.
-// Schedule: Monday-Friday at 1:05 PM PST.
-// Cron is UTC-based here: 1:05 PM PST = 21:05 UTC.
+// Schedule: Monday-Friday at 3:30 PM PST.
+// Cron is UTC-based here: 3:30 PM PST = 23:30 UTC.
 // This scheduled trigger REPLACES the prior dataset before starting a fresh Supabase-backed EOD scan.
 // Upstream ingestion rule remains narrow: monthly option chain only, 15-45 DTE only.
 // All ROC, probability, IV, OI, bid/ask spread, earnings, width, EM Status, and ranking filters stay in user Band Intake / scan-results-db.js.
 
 export const config = {
-  schedule: "5 21 * * 1-5"
+  schedule: "30 23 * * 1-5"
 };
 
 function json(body, status = 200) {
