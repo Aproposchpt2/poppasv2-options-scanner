@@ -231,8 +231,8 @@ function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = 
   for (const ek of Object.keys(byExp)) {
     const set = byExp[ek];
     const monthlyOI = set.reduce((s, o) => s + (num(o.openInterest) || 0), 0);
-    const calls = set.filter(o => o.type === "C" && o.strike > spot).sort((a,b) => a.strike - b.strike);
-    const puts = set.filter(o => o.type === "P" && o.strike < spot).sort((a,b) => b.strike - a.strike);
+    const calls = set.filter(o => o.type === "C" && o.strike > spot && (1 - Math.abs(num(o.delta) || 0)) >= 0.70).sort((a,b) => a.strike - b.strike);
+    const puts = set.filter(o => o.type === "P" && o.strike < spot && (1 - Math.abs(num(o.delta) || 0)) >= 0.70).sort((a,b) => b.strike - a.strike);
     const erDate = earningsMap[sym] || null;
     const earnInWindow = !!(erDate && erDate >= todayStr && erDate <= ek);
     for (const widthTarget of widthsFor(spot)) {
