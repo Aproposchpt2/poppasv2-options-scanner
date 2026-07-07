@@ -168,7 +168,7 @@ function schwabOptionRows(chain) {
     const c = item.contract || {};
     const expiry = expiryOf(c, item.expKey);
     const dte = dteOf(expiry);
-    if (!expiry || dte < 0 || dte > 45 || !isThirdFriday(expiry)) continue;
+    if (!expiry || dte < 15 || dte > 45 || !isThirdFriday(expiry)) continue;
     const type = c.putCall === "CALL" ? "C" : c.putCall === "PUT" ? "P" : item.optionType;
     const strike = num(c.strikePrice);
     if (!type || !strike) continue;
@@ -185,7 +185,7 @@ async function fetchSchwabChain(req, sym) {
   u.searchParams.set("range", "NTM");
   u.searchParams.set("strikeCount", "40");
   u.searchParams.set("includeQuotes", "TRUE");
-  u.searchParams.set("fromDate", offsetDate(0));
+  u.searchParams.set("fromDate", offsetDate(15));
   u.searchParams.set("toDate", offsetDate(45));
   u.searchParams.set("includeRaw", "true");
   const r = await fetch(u.toString(), { method: "GET", headers: { accept: "application/json" } });
