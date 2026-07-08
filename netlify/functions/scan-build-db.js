@@ -249,7 +249,8 @@ function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = 
         const midCredit = round2((mark(sc) + mark(sp)) - (mark(lc) + mark(lp)));
         const maxRisk = Number.isFinite(width - credit) ? round2(width - credit) : null;
         const roc = Number.isFinite(maxRisk) && maxRisk > 0 ? +(credit / maxRisk * 100).toFixed(2) : -999;
-        const iv = Math.max(num(sc.volatility) || 0, num(sp.volatility) || 0);
+        const ivRaw = Math.max(num(sc.volatility) || 0, num(sp.volatility) || 0);
+        const iv = ivRaw > 1.5 ? ivRaw : +(ivRaw * 100).toFixed(2); // convert decimal to % (e.g. 0.35 → 35)
         const putDelta = Math.abs(num(sp.delta) || 0), callDelta = Math.abs(num(sc.delta) || 0);
         const putProbOtm = +(1 - putDelta).toFixed(3), callProbOtm = +(1 - callDelta).toFixed(3);
         const probOtm = +Math.min(putProbOtm, callProbOtm).toFixed(3);
