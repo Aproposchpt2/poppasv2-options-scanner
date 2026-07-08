@@ -3,9 +3,9 @@
 // Backend ingestion rule: monthly third-Friday expirations only, DTE 0-45 only (temporary validation window).
 // Scanner/Band Intake filters remain in scan-results-db.js.
 
-const CHUNK = 6;
-const CONCURRENCY = 2;
-const MAX_RUN_MS = 20 * 1000;
+const CHUNK = 24;
+const CONCURRENCY = 4;
+const MAX_RUN_MS = 55 * 1000;
 const SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";
 const STRATEGY = "SP500_Tight_Condor_Scan_v3_SchwabLive";
 const SCAN_MODE = "Schwab live · Monthly option chain only · 0-45 DTE · Supabase persistence";
