@@ -239,6 +239,7 @@ function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = 
       const putStructures = [], callStructures = [];
       for (const sp of puts) { const lp = nearestByStrike(set, "P", sp.strike - widthTarget); if (lp && lp.strike < sp.strike) putStructures.push({ sp, lp }); }
       for (const sc of calls) { const lc = nearestByStrike(set, "C", sc.strike + widthTarget); if (lc && lc.strike > sc.strike) callStructures.push({ sc, lc }); }
+      const widthOut = [];
       for (const ps of putStructures) for (const cs of callStructures) {
         const { sp, lp } = ps, { sc, lc } = cs;
         const callW = +(lc.strike - sc.strike).toFixed(2), putW = +(sp.strike - lp.strike).toFixed(2);
@@ -257,7 +258,12 @@ function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = 
         const longPutOI = num(lp.openInterest) || 0, longCallOI = num(lc.openInterest) || 0;
         const em = expectedMoveFields(spot, iv, sc.dte, sp.strike, sc.strike);
         const score = qualityScore({ roc, probOtm, iv, monthlyOI, shortPutOI, shortCallOI, spreadMax, earnInWindow, expectedMoveStatus: em.expectedMoveStatus, credit, width });
-        out.push({ symbol: sym, name, sector, market: market || "both", spot: round2(spot), iv: round2(iv), hv: round2(iv), dte: sc.dte, expiry: ek, earnings: earnInWindow, earnings_date: earnInWindow ? erDate : null, next_earnings: erDate, short_put: sp.strike, long_put: lp.strike, short_call: sc.strike, long_call: lc.strike, credit, mid_credit: midCredit, width, max_risk: maxRisk, roc, prob_otm: probOtm, put_prob_otm: putProbOtm, call_prob_otm: callProbOtm, short_delta: +Math.max(putDelta, callDelta).toFixed(3), open_interest: monthlyOI, short_put_oi: shortPutOI, short_call_oi: shortCallOI, long_put_oi: longPutOI, long_call_oi: longCallOI, spread_max: spreadMax, expected_move: em.expectedMove, expected_low: em.expectedLow, expected_high: em.expectedHigh, expected_move_status: em.expectedMoveStatus, passed: true, score, review_status: "Raw Schwab monthly-chain candidate — apply Band Intake filters", note: "Raw Schwab candidate. User Band Intake values determine display eligibility.", raw_chain_eligible: true, raw_chain_rule: "Schwab live monthly third-Friday expiration, 0-45 DTE only using Pacific market date", source_payload: { symbol: sym, option_put_short: sp.option, option_put_long: lp.option, option_call_short: sc.option, option_call_long: lc.option, schwab_dte_put: sp.schwabDaysToExpiration, schwab_dte_call: sc.schwabDaysToExpiration } });
+        widthOut.push({ symbol: sym, name, sector, market: market || "both", spot: round2(spot), iv: round2(iv), hv: round2(iv), dte: sc.dte, expiry: ek, earnings: earnInWindow, earnings_date: earnInWindow ? erDate : null, next_earnings: erDate, short_put: sp.strike, long_put: lp.strike, short_call: sc.strike, long_call: lc.strike, credit, mid_credit: midCredit, width, max_risk: maxRisk, roc, prob_otm: probOtm, put_prob_otm: putProbOtm, call_prob_otm: callProbOtm, short_delta: +Math.max(putDelta, callDelta).toFixed(3), open_interest: monthlyOI, short_put_oi: shortPutOI, short_call_oi: shortCallOI, long_put_oi: longPutOI, long_call_oi: longCallOI, spread_max: spreadMax, expected_move: em.expectedMove, expected_low: em.expectedLow, expected_high: em.expectedHigh, expected_move_status: em.expectedMoveStatus, passed: true, score, review_status: "Raw Schwab monthly-chain candidate — apply Band Intake filters", note: "Raw Schwab candidate. User Band Intake values determine display eligibility.", raw_chain_eligible: true, raw_chain_rule: "Schwab live monthly third-Friday expiration, 0-45 DTE only using Pacific market date", source_payload: { symbol: sym, option_put_short: sp.option, option_put_long: lp.option, option_call_short: sc.option, option_call_long: lc.option, schwab_dte_put: sp.schwabDaysToExpiration, schwab_dte_call: sc.schwabDaysToExpiration } });
+      }
+      // Dedup: keep only the best-ROC condor per width for this symbol/expiry
+      if (widthOut.length) {
+        widthOut.sort((a, b) => (b.roc ?? -999) - (a.roc ?? -999));
+        out.push(widthOut[0]);
       }
     }
   }
@@ -268,9 +274,17 @@ function candidateKey(r) { return [r.scan_run_id, r.symbol, r.expiry, r.short_pu
 
 async function insertRows(scanRunId, rows) {
   if (!rows.length) return 0;
+  // Layer 1: exact-key dedup (same 8-field combo)
   const seen = new Map();
   for (const r of rows) { const mapped = { ...r, scan_run_id: scanRunId }; seen.set(candidateKey(mapped), mapped); }
-  const mapped = Array.from(seen.values());
+  // Layer 2: best-ROC dedup per (symbol, expiry, width)
+  const best = new Map();
+  for (const r of seen.values()) {
+    const gk = [r.scan_run_id, r.symbol, r.expiry, r.width].join("|");
+    const ex = best.get(gk);
+    if (!ex || (r.roc ?? -999) > (ex.roc ?? -999)) best.set(gk, r);
+  }
+  const mapped = Array.from(best.values());
   for (let i = 0; i < mapped.length; i += 500) {
     await sbFetch("scan_candidates?on_conflict=scan_run_id,symbol,expiry,short_put,long_put,short_call,long_call,width", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(mapped.slice(i, i + 500)) });
   }
