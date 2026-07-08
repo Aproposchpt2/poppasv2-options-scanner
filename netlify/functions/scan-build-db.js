@@ -260,9 +260,10 @@ function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = 
         const score = qualityScore({ roc, probOtm, iv, monthlyOI, shortPutOI, shortCallOI, spreadMax, earnInWindow, expectedMoveStatus: em.expectedMoveStatus, credit, width });
         widthOut.push({ symbol: sym, name, sector, market: market || "both", spot: round2(spot), iv: round2(iv), hv: round2(iv), dte: sc.dte, expiry: ek, earnings: earnInWindow, earnings_date: earnInWindow ? erDate : null, next_earnings: erDate, short_put: sp.strike, long_put: lp.strike, short_call: sc.strike, long_call: lc.strike, credit, mid_credit: midCredit, width, max_risk: maxRisk, roc, prob_otm: probOtm, put_prob_otm: putProbOtm, call_prob_otm: callProbOtm, short_delta: +Math.max(putDelta, callDelta).toFixed(3), open_interest: monthlyOI, short_put_oi: shortPutOI, short_call_oi: shortCallOI, long_put_oi: longPutOI, long_call_oi: longCallOI, spread_max: spreadMax, expected_move: em.expectedMove, expected_low: em.expectedLow, expected_high: em.expectedHigh, expected_move_status: em.expectedMoveStatus, passed: true, score, review_status: "Raw Schwab monthly-chain candidate — apply Band Intake filters", note: "Raw Schwab candidate. User Band Intake values determine display eligibility.", raw_chain_eligible: true, raw_chain_rule: "Schwab live monthly third-Friday expiration, 0-45 DTE only using Pacific market date", source_payload: { symbol: sym, option_put_short: sp.option, option_put_long: lp.option, option_call_short: sc.option, option_call_long: lc.option, schwab_dte_put: sp.schwabDaysToExpiration, schwab_dte_call: sc.schwabDaysToExpiration } });
       }
-      // Dedup: keep only the best-ROC condor per width for this symbol/expiry
+      // Dedup: keep the highest-score (Blueprint fit) condor per width,
+      // then ROC as tiebreaker. Score counts Blueprint criteria met.
       if (widthOut.length) {
-        widthOut.sort((a, b) => (b.roc ?? -999) - (a.roc ?? -999));
+        widthOut.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.roc ?? -999) - (a.roc ?? -999));
         out.push(widthOut[0]);
       }
     }
@@ -282,7 +283,8 @@ async function insertRows(scanRunId, rows) {
   for (const r of seen.values()) {
     const gk = [r.scan_run_id, r.symbol, r.expiry, r.width].join("|");
     const ex = best.get(gk);
-    if (!ex || (r.roc ?? -999) > (ex.roc ?? -999)) best.set(gk, r);
+    const rScore = r.score ?? 0, eScore = ex?.score ?? 0;
+    if (!ex || rScore > eScore || (rScore === eScore && (r.roc ?? -999) > (ex.roc ?? -999))) best.set(gk, r);
   }
   const mapped = Array.from(best.values());
   for (let i = 0; i < mapped.length; i += 500) {
