@@ -36,32 +36,38 @@ export default async (req) => {
   try {
     const requestUrl = new URL(req.url);
     const cycle = requestUrl.searchParams.get("cycle") || "scheduled-db-cleanup";
-    const runs = await call("scan_runs?select=id,status,scanned_count,pending_index,universe_count,candidate_count&status=neq.completed&order=started_at.asc");
     const method = ["DE", "LETE"].join("");
     let candidateRowsRemoved = 0;
     let runRowsRemoved = 0;
 
-    for (const run of Array.isArray(runs) ? runs : []) {
+    // Step 1: Remove non-completed (stale/interrupted) runs
+    const incompleteRuns = await call("scan_runs?select=id,status,candidate_count&status=neq.completed&order=started_at.asc");
+    for (const run of Array.isArray(incompleteRuns) ? incompleteRuns : []) {
       candidateRowsRemoved += Number(run.candidate_count || 0);
-      await call(`scan_candidates?scan_run_id=eq.${encodeURIComponent(run.id)}`, {
-        method,
-        headers: { Prefer: "return=minimal" }
-      });
-      await call(`scan_runs?id=eq.${encodeURIComponent(run.id)}`, {
-        method,
-        headers: { Prefer: "return=minimal" }
-      });
+      await call(`scan_candidates?scan_run_id=eq.${encodeURIComponent(run.id)}`, { method, headers: { Prefer: "return=minimal" } });
+      await call(`scan_runs?id=eq.${encodeURIComponent(run.id)}`, { method, headers: { Prefer: "return=minimal" } });
+      runRowsRemoved += 1;
+    }
+
+    // Step 2: Remove completed runs older than 1 day (keep only today's scans)
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const oldRuns = await call(`scan_runs?select=id,candidate_count&status=eq.completed&started_at=lt.${encodeURIComponent(cutoff)}&order=started_at.asc`);
+    for (const run of Array.isArray(oldRuns) ? oldRuns : []) {
+      candidateRowsRemoved += Number(run.candidate_count || 0);
+      await call(`scan_candidates?scan_run_id=eq.${encodeURIComponent(run.id)}`, { method, headers: { Prefer: "return=minimal" } });
+      await call(`scan_runs?id=eq.${encodeURIComponent(run.id)}`, { method, headers: { Prefer: "return=minimal" } });
       runRowsRemoved += 1;
     }
 
     return json({
       ok: true,
       cycle,
-      cleanupMode: "remove-incomplete-runs-and-candidates",
-      incompleteRunsFound: Array.isArray(runs) ? runs.length : 0,
+      cleanupMode: "remove-incomplete-and-old-completed-runs",
+      incompleteRunsFound: Array.isArray(incompleteRuns) ? incompleteRuns.length : 0,
+      oldCompletedRunsFound: Array.isArray(oldRuns) ? oldRuns.length : 0,
       candidateRowsRemoved,
       runRowsRemoved,
-      completedHistoryPreserved: true,
+      completedHistoryPreserved: false,
       freshRunWillStartAtZero: true,
       blobUsed: false,
       cleanedAt: new Date().toISOString()
