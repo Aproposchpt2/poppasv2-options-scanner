@@ -1,0 +1,43 @@
+name: Fix Restored Preview DB Autoload
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-restored-preview-db-autoload.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch preview controller
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('preview-rescan-timer.js')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace("b.textContent='Press Here for More Records'", "b.textContent='Load Next 50 Records'")
+          s=s.replace("b.textContent=scannerStarted?'Scanning Complete':'More Records'", "b.textContent=scannerStarted?'All Records Loaded':'Records Still Loading'")
+          old="function boot(){css();hideOld();ensureIvAll();activityCard();buttons();bindHeaderSort();bindBand();renderRows([],false);activity('Waiting to start scanning','warn',false);totals({matched:0,total:0});cleanFallback();setTimeout(cleanFallback,800);setTimeout(cleanFallback,2000)}"
+          new="function boot(){css();hideOld();ensureIvAll();activityCard();buttons();bindHeaderSort();bindBand();scannerStarted=true;renderRows([],false);activity('Loading stored scanner records…','ok',true);totals({matched:0,total:0});cleanFallback();setTimeout(function(){loadBoard(false,0).catch(function(e){console.warn(e);activity('Stored scanner records could not be loaded. Please try again in a moment.','warn',false)})},250);setTimeout(cleanFallback,800);setTimeout(cleanFallback,2000)}"
+          if old not in s:
+              raise SystemExit('Expected boot function not found; no patch applied')
+          s=s.replace(old,new)
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add preview-rescan-timer.js
+          git commit -m "Auto-load Supabase records on restored scanner page"
+          git push origin main

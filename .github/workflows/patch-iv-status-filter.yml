@@ -1,0 +1,91 @@
+name: Patch IV Status Filter
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/patch-iv-status-filter.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-iv-status-filter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch scanner preview IV Status filter
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('scanner-table-preview.html')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          # 1) Add IV Status field to the band intake form after Min Monthly Chain IV.
+          form_old = '<label>Min Monthly Chain IV (%)<input id="ivMin" type="number" value="30"></label><label>Min monthly chain OI'
+          form_new = '<label>Min Monthly Chain IV (%)<input id="ivMin" type="number" value="30"></label><label>IV Status<select id="ivStatusSel"><option value="Inflated">Inflated</option><option value="Deflated">Deflated</option><option value="Fair" selected>Fair</option></select></label><label>Min monthly chain OI'
+          if form_old in text and 'id="ivStatusSel"' not in text:
+              text = text.replace(form_old, form_new, 1)
+
+          # 2) Add a helper that calculates the same IV Status shown in the table.
+          review_fn = "function review(r){return r.reviewStatus||r.note||(r.passed?'Matches primary filters':'Candidate for manual review')}"
+          helper = review_fn + "function ivStatusOf(r){let v=num(r.iv);return v<=40?'Deflated':v<=60?'Fair':'Inflated'}"
+          if review_fn in text and 'function ivStatusOf' not in text:
+              text = text.replace(review_fn, helper, 1)
+
+          # 3) Add ivStatus to filters().
+          filters_old = "rankBy:$('rankBy').value,width:num($('spreadWidth').value)}"
+          filters_new = "rankBy:$('rankBy').value,ivStatus:$('ivStatusSel')?$('ivStatusSel').value:'Fair',width:num($('spreadWidth').value)}"
+          if filters_old in text and "ivStatus:$('ivStatusSel')" not in text:
+              text = text.replace(filters_old, filters_new, 1)
+
+          # 4) Apply the IV Status display filter in apply().
+          apply_old = "rows=rows.filter(r=>sp(r)==null||sp(r)<=f.maxSpread);if(f.width)"
+          apply_new = "if(f.ivStatus)rows=rows.filter(r=>ivStatusOf(r)===f.ivStatus);rows=rows.filter(r=>sp(r)==null||sp(r)<=f.maxSpread);if(f.width)"
+          if apply_old in text and "ivStatusOf(r)===f.ivStatus" not in text:
+              text = text.replace(apply_old, apply_new, 1)
+
+          # 5) Use helper for displayed IV Status value so table and filter stay aligned.
+          render_old = "${num(r.iv)<=40?'Deflated':num(r.iv)<=60?'Fair':'Inflated'}"
+          render_new = "${ivStatusOf(r)}"
+          if render_old in text:
+              text = text.replace(render_old, render_new, 1)
+
+          # 6) Reset defaults should restore Fair.
+          reset_old = "$('ivMin').value='30';$('minOI').value='10000';"
+          reset_new = "$('ivMin').value='30';if($('ivStatusSel'))$('ivStatusSel').value='Fair';$('minOI').value='10000';"
+          if reset_old in text and "ivStatusSel'))$('ivStatusSel').value='Fair'" not in text:
+              text = text.replace(reset_old, reset_new, 1)
+
+          # 7) Make the IV Status dropdown trigger apply().
+          listener_old = "'rankBy','rocMin','rocMax','minProb','ivMin','minOI'"
+          listener_new = "'rankBy','ivStatusSel','rocMin','rocMax','minProb','ivMin','minOI'"
+          if listener_old in text and "'ivStatusSel'" not in text:
+              text = text.replace(listener_old, listener_new, 1)
+
+          if text == original:
+              print('No changes needed or markers not found.')
+          else:
+              path.write_text(text, encoding='utf-8')
+              print('IV Status filter patch applied.')
+          PY
+
+      - name: Commit patch if changed
+        run: |
+          if git diff --quiet; then
+            echo "No file changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scanner-table-preview.html
+          git commit -m "Add IV Status filter to preview band form"
+          git push

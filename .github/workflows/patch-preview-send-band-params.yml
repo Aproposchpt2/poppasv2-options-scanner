@@ -1,0 +1,69 @@
+name: Patch Preview Send Band Params
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-preview-send-band-params.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch preview controller request parameters
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('preview-rescan-timer.js')
+          s = p.read_text(encoding='utf-8')
+
+          helper_marker = 'function bandParams(limit, offset){'
+          if helper_marker not in s:
+              helper = '''
+  function val(id, fallback){ var x=el(id); return x && x.value !== undefined && x.value !== '' ? x.value : fallback; }
+  function bandParams(limit, offset){
+    var d = String(val('dteWindow','15-45')).split('-');
+    var spw = val('spreadWidth','5');
+    var q = new URLSearchParams();
+    q.set('limit', limit);
+    q.set('offset', offset);
+    q.set('rocMin', val('rocMin','5'));
+    q.set('rocMax', val('rocMax','10'));
+    q.set('minProb', val('minProb','90'));
+    q.set('ivMin', val('ivMin','40'));
+    q.set('minOI', val('minOI','10000'));
+    q.set('minShortOI', val('minShortOI','500'));
+    q.set('maxSpread', val('maxSpread','0.05'));
+    q.set('dteMin', d[0] || '15');
+    q.set('dteMax', d[1] || '45');
+    q.set('excludeEarnings', val('excludeEarnings','yes'));
+    q.set('idx', val('idxSel','both'));
+    q.set('width', spw === '0' ? '0' : spw);
+    q.set('rankBy', val('rankBy','edge'));
+    q.set('passersTop', val('passersTop','yes'));
+    q.set('_ts', Date.now());
+    return q.toString();
+  }
+'''
+              s = s.replace('  async function fetchWithTimeout(url, ms){', helper + '\n  async function fetchWithTimeout(url, ms){')
+
+          s = s.replace("'/.netlify/functions/scan-results-preview?limit=' + size + '&offset=0&_ts=' + Date.now()", "'/.netlify/functions/scan-results-preview?' + bandParams(size, 0)")
+          s = s.replace("'/.netlify/functions/scan-results-preview?limit=' + LIMIT + '&offset=' + pageOffset + '&_ts=' + Date.now()", "'/.netlify/functions/scan-results-preview?' + bandParams(LIMIT, pageOffset)")
+          s = s.replace("Loaded <strong>' + allRows.length.toLocaleString() + '</strong> of <strong>' + totalRows.toLocaleString() + '</strong> live records before display filtering.", "Loaded <strong>' + allRows.length.toLocaleString() + '</strong> of <strong>' + (data.matched||totalRows).toLocaleString() + '</strong> rows matching the current Band Intake filters.")
+          s = s.replace("totalRows = data.total || data.matched || allRows.length;", "totalRows = data.matched || data.total || allRows.length;")
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add preview-rescan-timer.js
+          git commit -m "Send band intake params to preview endpoint"
+          git push

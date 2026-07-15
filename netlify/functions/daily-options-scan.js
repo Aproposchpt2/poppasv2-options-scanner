@@ -52,6 +52,24 @@ const isThirdFriday = (y, mo, d) => { const x = new Date(Date.UTC(y, mo - 1, d))
 const ivPct = v => (v > 1.5 ? v : v * 100); // CBOE iv is a decimal (0.42 = 42%)
 // Wing width scaled to the stock's price — $5 baseline for the core $80–250 range.
 const widthFor = spot => (spot < 250 ? 5 : 10);
+function expectedMoveFields(spot, iv, dte, shortPut, shortCall) {
+  const s = +spot, v = +iv, d = +dte;
+  if (!Number.isFinite(s) || !Number.isFinite(v) || !Number.isFinite(d) || s <= 0 || v <= 0 || d <= 0) {
+    return { expectedMove: null, expectedLow: null, expectedHigh: null, expectedMoveStatus: "Verify" };
+  }
+  const move = +(s * (v / 100) * Math.sqrt(d / 365)).toFixed(2);
+  const low = +(s - move).toFixed(2);
+  const high = +(s + move).toFixed(2);
+  let status = "Review";
+  const put = +shortPut, call = +shortCall;
+  if (Number.isFinite(put) && Number.isFinite(call)) {
+    const buffer = Math.max(move * 0.10, s * 0.005);
+    if (put < low && call > high) status = "Outside EM";
+    else if (put >= low + buffer || call <= high - buffer) status = "Inside EM";
+    else status = "Near EM";
+  }
+  return { expectedMove: move, expectedLow: low, expectedHigh: high, expectedMoveStatus: status };
+}
 
 // Build the tightest ±0.10-delta, $5-wide condor in the nearest 15–45 DTE regular monthly.
 function buildCondor(ch, now) {
@@ -102,9 +120,12 @@ function buildCondor(ch, now) {
     if (credit <= 0) continue;
     const roc = credit / (width - credit) * 100;
     if (roc < 5 || roc > 30) continue; // broad sane band; front-end ROC slider filters to target (default 5–10%)
+    const iv = Math.max(ivPct(sc.iv), ivPct(sp.iv));
+    const em = expectedMoveFields(spot, iv, sc.dte, sp.strike, sc.strike);
     return {
       spot, dte: sc.dte, ek, sc, sp, lc, lp, credit, width,
-      iv: Math.max(ivPct(sc.iv), ivPct(sp.iv)),
+      expectedMove: em.expectedMove, expectedLow: em.expectedLow, expectedHigh: em.expectedHigh, expectedMoveStatus: em.expectedMoveStatus,
+      iv,
       oiMin: Math.min(sc.open_interest || 0, sp.open_interest || 0), monthlyOI,
       shortPutOI: sp.open_interest || 0, shortCallOI: sc.open_interest || 0,
       longPutOI: lp.open_interest || 0, longCallOI: lc.open_interest || 0,
@@ -146,8 +167,9 @@ export default async function handler() {
         probOtm: +Math.min(1 - c.putDelta, 1 - c.callDelta).toFixed(3), putProbOtm: +(1 - c.putDelta).toFixed(3), callProbOtm: +(1 - c.callDelta).toFixed(3), shortDelta: +c.shortDelta.toFixed(3),
         openInterest: c.monthlyOI, shortPutOI: c.shortPutOI, shortCallOI: c.shortCallOI,
         longPutOI: c.longPutOI, longCallOI: c.longCallOI, spreadMax: +c.spreadMax.toFixed(2), spot: +c.spot.toFixed(2),
+        expectedMove: c.expectedMove, expectedLow: c.expectedLow, expectedHigh: c.expectedHigh, expectedMoveStatus: c.expectedMoveStatus,
         shortCall: c.sc.strike, shortPut: c.sp.strike, longCall: c.lc.strike, longPut: c.lp.strike,
-        passed, score: 5 - misses.length,
+        passed, score: Object.keys(checks).length - misses.length,
         note: passed ? "Matches primary filters ✓" : ("Needs review: " + misses.join(", "))
       });
     }

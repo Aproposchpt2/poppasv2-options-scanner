@@ -1,0 +1,57 @@
+name: Add 0-45 DTE Band
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/add-0-45-dte-band.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Add DTE selector and static notice
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('preview-rescan-timer.js')
+          s = p.read_text(encoding='utf-8')
+
+          helper = '''
+  function ensureDteSelector(){
+    var old=el('dteWindow');
+    if(!old||old.tagName==='SELECT')return;
+    var sel=document.createElement('select');
+    sel.id='dteWindow';
+    sel.innerHTML='<option value="15-45" selected>15–45 Days — Standard</option><option value="0-45">0–45 Days — Include Near-Term Expirations</option>';
+    old.parentNode.replaceChild(sel,old);
+  }
+'''
+          if 'function ensureDteSelector()' not in s:
+              s = s.replace('  function readDte(){', helper + '  function readDte(){')
+
+          target = "card.innerHTML='<div class=\"scan-activity-head\"><span class=\"scan-dot\"></span><span>Scanner Activity</span></div><div id=\"scannerActivityMessage\" class=\"scan-activity-message\">Waiting to start scanning</div><div class=\"scan-stats\"><div class=\"scan-stat\"><span>Total records found</span><strong id=\"scanTotalFound\">—</strong></div><div class=\"scan-stat\"><span>Band matches</span><strong id=\"scanBandMatches\">—</strong></div><div class=\"scan-stat\"><span>Displayed</span><strong id=\"scanDisplayedCount\">—</strong></div></div>';"
+          replacement = "card.innerHTML='<div class=\"scan-activity-head\"><span class=\"scan-dot\"></span><span>Scanner Activity</span></div><div id=\"scannerActivityMessage\" class=\"scan-activity-message\">Waiting to start scanning</div><div class=\"scan-stats\"><div class=\"scan-stat\"><span>Total records found</span><strong id=\"scanTotalFound\">—</strong></div><div class=\"scan-stat\"><span>Band matches</span><strong id=\"scanBandMatches\">—</strong></div><div class=\"scan-stat\"><span>Displayed</span><strong id=\"scanDisplayedCount\">—</strong></div></div><div class=\"note\" style=\"margin-top:12px\"><strong>Educational review only.</strong> Near-term options may experience accelerated time decay, wider price movement, and increased assignment risk. Verify expiration, liquidity, pricing, earnings, and defined risk independently before making any decision.</div>';"
+          if target in s:
+              s = s.replace(target, replacement)
+
+          s = s.replace('function boot(){css();hideOld();ensureIvAll();activityCard();buttons();bindHeaderSort();bindBand();', 'function boot(){css();hideOld();ensureIvAll();ensureDteSelector();activityCard();buttons();bindHeaderSort();bindBand();')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Commit DTE band update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add preview-rescan-timer.js
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Add 0-45 DTE band option and near-term risk notice"
+          git push origin main

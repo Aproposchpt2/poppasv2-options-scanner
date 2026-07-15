@@ -1,0 +1,69 @@
+name: Patch Preview Direct Render
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-preview-direct-render.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch preview controller render fallback
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('preview-rescan-timer.js')
+          s=p.read_text(encoding='utf-8')
+
+          marker='function renderRowsDirect(rows){'
+          if marker not in s:
+              helper = '''
+  function cell(v){ return String(v == null ? '—' : v).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function nfmt(v,d){ var n=Number(v); return Number.isFinite(n) ? n.toFixed(d==null?2:d) : '—'; }
+  function renderRowsDirect(rows){
+    var body = el('resultsBody');
+    if(!body) return;
+    if(!rows || !rows.length){ body.innerHTML='<tr><td colspan="99" class="empty">No live rows returned yet.</td></tr>'; return; }
+    body.innerHTML = rows.map(function(r,i){
+      var oi = r.openInterest || r.oi || r.monthlyOI || 0;
+      var spoi = Number(r.shortPutOI || r.putShortOI || r.oiMin || 0);
+      var scoi = Number(r.shortCallOI || r.callShortOI || r.oiMin || 0);
+      var shortOi = Math.min(spoi || 0, scoi || 0);
+      var prob = r.prob != null ? r.prob : (r.probOtm != null ? Math.round(Number(r.probOtm)*100) : '—');
+      var width = Number(r.width || 5);
+      var risk = r.risk != null ? r.risk : (r.credit != null ? width - Number(r.credit) : null);
+      var roc = r.roc != null ? r.roc : (risk && r.credit ? Number(r.credit)/risk*100 : null);
+      return '<tr class="result-row"><td>'+(i+1)+'</td><td><strong>'+cell(r.symbol)+'</strong></td><td>'+cell(r.sector||r.market||'—')+'</td><td>'+(r.spot!=null?'$'+nfmt(r.spot,2):'—')+'</td><td>'+cell(r.dte!=null?r.dte+'d':'—')+'</td><td>'+cell(r.nextEarnings||r.earningsDate||'Verify')+'</td><td>'+cell(r.iv!=null?nfmt(r.iv,1)+'%':'—')+'</td><td>'+cell(r.expectedMove!=null?'±$'+nfmt(r.expectedMove,2):'Verify')+'</td><td>'+cell(r.expectedMoveStatus||'Verify')+'</td><td>'+cell(r.ivStatus||r.monthlyChainIVStatus||'Verify')+'</td><td>'+Number(oi||0).toLocaleString()+'</td><td>'+Number(shortOi||0).toLocaleString()+'</td><td>'+cell(prob==='—'?'—':prob+'%')+'</td><td>'+(r.credit!=null?'$'+nfmt(r.credit,2):'—')+'</td><td>'+(risk!=null?'$'+nfmt(risk,2):'—')+'</td><td>'+(roc!=null?nfmt(roc,2)+'%':'—')+'</td><td>'+(r.spreadMax!=null?'$'+nfmt(r.spreadMax,2):'Verify')+'</td><td class="signal review">'+cell(r.reviewStatus||r.note||(r.passed?'Matches primary filters ✓':'Candidate for manual review'))+'</td></tr>';
+    }).join('');
+    setText('candidateCount', String(rows.length));
+  }
+'''
+              s=s.replace('  async function loadLivePage(append){', helper+'\n  async function loadLivePage(append){')
+
+          old="""    if(typeof apply === 'function') apply();\n    if(typeof showTicket === 'function' && typeof lastRows !== 'undefined' && lastRows.length) showTicket(0);"""
+          new="""    var usedDirect=false;\n    try { if(typeof apply === 'function') apply(); } catch(e){ usedDirect=true; }\n    var bt = el('resultsBody') ? el('resultsBody').innerText : '';\n    if(usedDirect || /No candidates matched|No scan has been run|Fresh scan in progress/i.test(bt)) renderRowsDirect(allRows);\n    if(typeof showTicket === 'function' && typeof lastRows !== 'undefined' && lastRows.length) showTicket(0);"""
+          if old in s:
+              s=s.replace(old,new)
+          else:
+              print('Apply block not found; helper only added if needed.')
+
+          s=s.replace("setText('scanMode', data.building ? 'Live board finalizing' : 'Live board ready');", "setText('scanMode', data.building ? 'Building — live rows shown' : 'Live board ready');")
+          s=s.replace("setHTML('explanation','Stable pull size: <strong>' + LIMIT + '</strong> records. Showing results from the current Band Intake values. Loaded <strong>' + allRows.length.toLocaleString() + '</strong> of <strong>' + totalRows.toLocaleString() + '</strong> live records before display filtering. ' + (data.userMessage || ''));", "setHTML('explanation','Showing available live rows while the scan continues building. Loaded <strong>' + allRows.length.toLocaleString() + '</strong> displayed rows from <strong>' + totalRows.toLocaleString() + '</strong> currently available backend rows. ' + (data.userMessage || ''));")
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add preview-rescan-timer.js
+          git commit -m "Render preview rows while scan is building"
+          git push

@@ -1,0 +1,54 @@
+name: Temporarily Expand Backend Ingestion to 0-45 DTE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/temporary-0-45-backend-ingestion.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch scanner backend ingestion window
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path('netlify/functions/scan-build-db.js')
+          s = p.read_text(encoding='utf-8')
+
+          replacements = {
+            'Backend ingestion rule: monthly third-Friday expirations only, DTE 15-45 only.': 'Backend ingestion rule: monthly third-Friday expirations only, DTE 0-45 only (temporary validation window).',
+            'Schwab live · Monthly option chain only · 15-45 DTE · Supabase persistence': 'Schwab live · Monthly option chain only · 0-45 DTE · Supabase persistence',
+            'ingestion extracts monthly option-chain records with 15-45 DTE only': 'ingestion extracts monthly option-chain records with 0-45 DTE only',
+            '["Schwab live option chain", "Monthly third-Friday expiration", "15-45 DTE", "Duplicate structural record removal"]': '["Schwab live option chain", "Monthly third-Friday expiration", "0-45 DTE", "Duplicate structural record removal"]',
+            'dte < 15 || dte > 45': 'dte < 0 || dte > 45',
+            'u.searchParams.set("fromDate", offsetDate(15));': 'u.searchParams.set("fromDate", offsetDate(0));',
+            'Schwab live monthly third-Friday expiration, 15-45 DTE only using Pacific market date': 'Schwab live monthly third-Friday expiration, 0-45 DTE only using Pacific market date',
+            'fromDate: offsetDate(15)': 'fromDate: offsetDate(0)'
+          }
+
+          for old, new in replacements.items():
+            if old not in s:
+              raise SystemExit(f'Missing expected text: {old}')
+            s = s.replace(old, new)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Commit temporary backend window
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add netlify/functions/scan-build-db.js
+          git commit -m "Temporarily expand backend ingestion to 0-45 DTE"
+          git push origin main

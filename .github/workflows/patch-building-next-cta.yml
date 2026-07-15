@@ -1,0 +1,78 @@
+name: Patch Building Next CTA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-building-next-cta.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch CTA state logic
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('preview-rescan-timer.js')
+          s = p.read_text(encoding='utf-8')
+
+          if 'var lastScanData = null;' not in s:
+              s = s.replace('var currentRows = [];', 'var currentRows = [];\n  var lastScanData = null;')
+
+          old = """  function setupNextButton(){
+    var b=el('loadNextBtn');
+    var rescan=el('rescanBtn');
+    if(!b && rescan){ b=document.createElement('button'); b.id='loadNextBtn'; b.className='btn secondary'; rescan.insertAdjacentElement('afterend', b); }
+    if(!b) return;
+    var has = nextOffset !== null && nextOffset !== undefined;
+    b.style.display='inline-block';
+    b.disabled=!has;
+    b.textContent=has ? ('Load Next ' + LIMIT + ' Records') : 'All Records Loaded';
+    b.onclick=function(){ if(has) appendNextRows(); };
+  }
+"""
+          new = """  function setupNextButton(){
+    var b=el('loadNextBtn');
+    var rescan=el('rescanBtn');
+    if(!b && rescan){ b=document.createElement('button'); b.id='loadNextBtn'; b.className='btn secondary'; rescan.insertAdjacentElement('afterend', b); }
+    if(!b) return;
+    var has = nextOffset !== null && nextOffset !== undefined;
+    var building = !!(lastScanData && lastScanData.building);
+    b.style.display='inline-block';
+    if(has){
+      b.disabled=false;
+      b.textContent='Load Next ' + LIMIT + ' Records';
+      b.onclick=function(){ appendNextRows(); };
+    } else if(building){
+      b.disabled=false;
+      b.textContent='Check For More Records';
+      b.onclick=function(){ loadBoard(); };
+    } else {
+      b.disabled=true;
+      b.textContent='All Records Loaded';
+      b.onclick=null;
+    }
+  }
+"""
+          if old not in s:
+              raise SystemExit('setupNextButton block not found')
+          s = s.replace(old, new)
+
+          s = s.replace('nextOffset = data.nextOffset;\n    updateStats(data);', 'nextOffset = data.nextOffset;\n    lastScanData = data;\n    updateStats(data);')
+
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add preview-rescan-timer.js
+          git commit -m "Show check for more records while scan is building"
+          git push

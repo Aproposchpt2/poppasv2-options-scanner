@@ -25,3 +25,39 @@ Replace your existing files with these revised files in the same locations. If y
 ## Important next step
 
 Your full background scanner file `scan-build-background.js` was referenced by the uploaded files but was not included in the upload. If that file is currently producing the cached board, it should also be upgraded to output `shortPutOI`, `shortCallOI`, `longPutOI`, `longCallOI`, `spreadMax`, and `midCredit` so the revised filters work at full strength. The revised `scan-results.js` remains backward-compatible with older cached boards, but the best version requires those fields.
+
+## v2.1 Expected Move Upgrade
+
+This package adds an Expected Move feature to the Poppas Pro scanner results table and exported CSV.
+
+### Files updated
+
+- `index.html`
+  - Adds `Spot`, `Exp. Move`, and `EM Status` columns to the results table.
+  - Adds expected move values to the order ticket detail panel.
+  - Adds expected move fields to the CSV export.
+  - Computes fallback expected move in the browser when backend fields are missing.
+
+- `netlify/functions/scan-build-background.js`
+  - Calculates and stores `expectedMove`, `expectedLow`, `expectedHigh`, and `expectedMoveStatus` for each cached-board candidate.
+
+- `netlify/functions/daily-options-scan.js`
+  - Calculates and returns the same expected move fields for quick/on-demand scan output.
+  - Corrects the review-score calculation to use the number of active validation checks.
+
+- `netlify/functions/scan-results.js`
+  - Passes through stored expected move fields and computes them as a safe fallback for older cached boards.
+
+### Formula
+
+Expected Move = Spot × IV × sqrt(DTE / 365)
+
+### Status labels
+
+- `Outside EM` — both short strikes are outside the expected-move range.
+- `Near EM` — a short strike is near the expected-move boundary.
+- `Inside EM` — at least one short strike is inside the expected-move range and requires extra review.
+
+### Risk note
+
+Expected Move is an IV-based estimate for the expiration window. It is not a forecast, recommendation, or guarantee. Options involve risk and all pricing, earnings, liquidity, and risk values must be verified on the trading platform before use.

@@ -1,0 +1,64 @@
+name: Patch EM Status Colors
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/patch-em-status-colors.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-em-status-colors:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch scanner preview EM status colors
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('scanner-table-preview.html')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          css_marker = ".ok{color:var(--green)}.warn{color:var(--amber)}"
+          css_patch = ".ok{color:var(--green)}.warn{color:var(--amber)}.em-out{color:var(--green);font-weight:900}.em-near{color:var(--amber);font-weight:900}.em-in{color:var(--red);font-weight:900}"
+          if css_marker in text and ".em-out{" not in text:
+              text = text.replace(css_marker, css_patch, 1)
+
+          helper_marker = "function review(r){return r.reviewStatus||r.note||(r.passed?'Matches primary filters':'Candidate for manual review')}"
+          helper_patch = helper_marker + "function emClass(status){status=String(status||'').toLowerCase();if(status.includes('outside'))return 'em-out';if(status.includes('near'))return 'em-near';if(status.includes('inside'))return 'em-in';return ''}"
+          if helper_marker in text and "function emClass" not in text:
+              text = text.replace(helper_marker, helper_patch, 1)
+
+          cell_old = "<td>${e?e.status:'Verify'}</td><td>${num(r.iv)<=40?'Deflated':num(r.iv)<=60?'Fair':'Inflated'}</td>"
+          cell_new = "<td class=\"${emClass(e?e.status:'Verify')}\">${e?e.status:'Verify'}</td><td>${num(r.iv)<=40?'Deflated':num(r.iv)<=60?'Fair':'Inflated'}</td>"
+          if cell_old in text and 'emClass(e?e.status' not in text:
+              text = text.replace(cell_old, cell_new, 1)
+
+          if text == original:
+              print('No changes needed or markers not found.')
+          else:
+              path.write_text(text, encoding='utf-8')
+              print('EM Status color patch applied.')
+          PY
+
+      - name: Commit patch if changed
+        run: |
+          if git diff --quiet; then
+            echo "No file changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scanner-table-preview.html
+          git commit -m "Color-code EM status values on preview table"
+          git push

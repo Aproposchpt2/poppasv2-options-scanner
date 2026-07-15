@@ -1,0 +1,46 @@
+name: Restore Yesterday Clean Scanner Page
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/restore-yesterday-clean-launch-page.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Restore yesterday scanner page
+        run: git checkout fec5b0def204f24ec5840b53f270a48fb824a0b4 -- scanner-table-preview.html
+
+      - name: Remove preview-only launch messaging
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scanner-table-preview.html')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('<span class="pill">Preview only</span>', '')
+          s = s.replace('<div class="banner"><div class="container"><strong>Source-of-truth test page.</strong> Homepage, nav, and production scanner remain untouched.</div></div>', '')
+          s = s.replace('<span>Uses existing support files: /hero.webp and /hero.png</span>', '')
+          s = s.replace('>Review Changes<', '>Open Scanner<')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Commit restored page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scanner-table-preview.html
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Restore yesterday scanner design without preview messaging"
+          git push origin main

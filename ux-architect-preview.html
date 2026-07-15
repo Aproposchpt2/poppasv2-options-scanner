@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POPPA’S UX Architect Preview Sandbox</title>
+  <meta name="robots" content="noindex,nofollow" />
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: #0e1a2b;
+      --panel-2: #12243a;
+      --text: #f7fbff;
+      --muted: #aebdd0;
+      --gold: #f0c76a;
+      --line: rgba(255,255,255,.14);
+      --green: #49d18a;
+      --blue: #7fb3ff;
+      --danger: #ffb4a8;
+      --max: 1180px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, rgba(240,199,106,.16), transparent 34%), var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(14px);
+      background: rgba(7,17,31,.86);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .nav {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 14px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand {
+      font-weight: 800;
+      letter-spacing: .04em;
+      color: var(--gold);
+      white-space: nowrap;
+    }
+
+    .navlinks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: .92rem;
+      color: var(--muted);
+    }
+
+    .navlinks a {
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+    }
+
+    .navlinks a:hover {
+      border-color: var(--line);
+      color: var(--text);
+      background: rgba(255,255,255,.05);
+    }
+
+    .wrap {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 42px 22px 80px;
+    }
+
+    .status {
+      display: inline-flex;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid rgba(240,199,106,.35);
+      background: rgba(240,199,106,.1);
+      color: #ffe5a3;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: .88rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 28px;
+      align-items: stretch;
+      margin-top: 26px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(18,36,58,.96), rgba(14,26,43,.96));
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.28);
+    }
+
+    .hero-main { padding: 34px; }
+
+    h1, h2, h3 { line-height: 1.12; margin: 0 0 14px; }
+    h1 { font-size: clamp(2.1rem, 5vw, 4.6rem); letter-spacing: -.05em; }
+    h2 { font-size: clamp(1.55rem, 3vw, 2.3rem); color: var(--gold); }
+    h3 { font-size: 1.15rem; color: var(--text); }
+
+    p { color: var(--muted); margin: 0 0 16px; }
+
+    .lead {
+      font-size: 1.16rem;
+      max-width: 72ch;
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 46px;
+      padding: 0 18px;
+      border-radius: 999px;
+      font-weight: 800;
+      border: 1px solid var(--line);
+    }
+
+    .btn.primary {
+      background: var(--gold);
+      color: #1b1406;
+      border-color: transparent;
+    }
+
+    .btn.secondary {
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+    }
+
+    .side-panel { padding: 26px; }
+
+    .notice {
+      border-left: 4px solid var(--gold);
+      background: rgba(255,255,255,.045);
+      padding: 16px;
+      border-radius: 16px;
+      margin-top: 16px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .section {
+      margin-top: 28px;
+      padding: 28px;
+    }
+
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      background: rgba(255,255,255,.045);
+      min-height: 164px;
+    }
+
+    .tag {
+      display: inline-block;
+      margin-bottom: 10px;
+      color: var(--green);
+      font-weight: 800;
+      font-size: .78rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .flow-step {
+      border: 1px solid var(--line);
+      background: rgba(127,179,255,.08);
+      border-radius: 16px;
+      padding: 14px;
+      min-height: 115px;
+    }
+
+    .flow-step strong {
+      color: var(--blue);
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    ul {
+      margin: 12px 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+    }
+
+    li { margin: 6px 0; }
+
+    .protected {
+      border-color: rgba(255,180,168,.4);
+      background: rgba(255,180,168,.08);
+    }
+
+    .protected strong { color: var(--danger); }
+
+    footer {
+      border-top: 1px solid var(--line);
+      margin-top: 36px;
+      padding-top: 24px;
+      color: var(--muted);
+      font-size: .92rem;
+    }
+
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .nav { align-items: flex-start; flex-direction: column; }
+    }
+
+    @media (max-width: 560px) {
+      .wrap { padding: 28px 16px 60px; }
+      .hero-main, .side-panel, .section { padding: 22px; }
+      .flow { grid-template-columns: 1fr; }
+      .navlinks { gap: 6px; }
+      .navlinks a { padding: 7px 8px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <nav class="nav" aria-label="Preview navigation template">
+      <a class="brand" href="./ux-architect-preview.html">POPPA’S UX Preview</a>
+      <div class="navlinks">
+        <a href="./index.html">Current Home</a>
+        <a href="#live-scanner-lab">Live Scanner Lab</a>
+        <a href="#academy">Academy</a>
+        <a href="#tools">Tools</a>
+        <a href="#about-poppa">About Poppa</a>
+        <a href="#risk-notice">Risk Notice</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <span class="status">UX Architect Sandbox · Not Live Homepage</span>
+
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="card hero-main">
+        <h1 id="hero-title">POPPA’S Option Scanner v3 UX Preview</h1>
+        <p class="lead">This page is a protected working template for redesigning the first-time visitor experience before any approved changes are moved to the live site.</p>
+        <p>Use this page to draft, test, and approve the future public-facing flow: who Poppa is, what Iron Condor research means, what the scanner teaches, and how visitors should move from education into the Live Scanner Lab.</p>
+        <div class="cta-row">
+          <a class="btn primary" href="#live-scanner-lab">Preview Live Scanner Lab Flow</a>
+          <a class="btn secondary" href="#academy">Preview Academy Message</a>
+        </div>
+      </div>
+
+      <aside class="card side-panel">
+        <h2>Control Rule</h2>
+        <div class="notice protected">
+          <p><strong>Do not modify the live homepage from this page.</strong></p>
+          <p>The restored homepage remains protected until this preview is reviewed, adjusted, validated, and formally approved for promotion.</p>
+        </div>
+        <div class="notice">
+          <p><strong>Project truth:</strong> Walter “Poppa” S. is the creator, owner, operator, and professional Iron Condor trader behind POPPA’S Option Scanner.</p>
+          <p>Jeffery Mitchell coordinates the project and implementation workflow.</p>
+        </div>
+      </aside>
+    </section>
+
+    <section class="card section" id="site-architecture">
+      <h2>Proposed Site Architecture Template</h2>
+      <p>This section gives the UX Architect a safe structure to build from. The final messaging, section order, and CTAs should be refined here before any promotion request.</p>
+      <div class="grid">
+        <article class="mini-card">
+          <span class="tag">Home</span>
+          <h3>Promotional + Educational</h3>
+          <p>Introduce Poppa, explain the platform, and guide first-time visitors toward the Academy or Live Scanner Lab.</p>
+        </article>
+        <article class="mini-card" id="live-scanner-lab">
+          <span class="tag">Scanner</span>
+          <h3>Live Scanner Lab</h3>
+          <p>Dedicated page for Build Your Research Band, Run Scanner, Scanner Board, Load Next 50 Candidates, and Research Ticket.</p>
+        </article>
+        <article class="mini-card" id="academy">
+          <span class="tag">Academy</span>
+          <h3>Learn Before Scanning</h3>
+          <p>Explain Iron Condors, defined risk, probability, expected move, bid/ask spread, ROC, earnings risk, and scanner interpretation.</p>
+        </article>
+        <article class="mini-card" id="tools">
+          <span class="tag">Tools</span>
+          <h3>Resources + Calculators</h3>
+          <p>House future calculators, glossary, checklists, research templates, and supporting education tools.</p>
+        </article>
+        <article class="mini-card" id="about-poppa">
+          <span class="tag">About</span>
+          <h3>About Poppa</h3>
+          <p>Position Walter “Poppa” S. as the creator and professional Iron Condor trader behind the educational review method.</p>
+        </article>
+        <article class="mini-card" id="risk-notice">
+          <span class="tag">Risk</span>
+          <h3>Risk Notice</h3>
+          <p>Clearly state educational use only, not financial advice, not trade signals, no guaranteed outcomes, and options involve risk.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card section" id="visitor-flow">
+      <h2>First-Time Visitor Flow Template</h2>
+      <p>The UX Architect should use this as the starting sequence for the user-friendly experience.</p>
+      <div class="flow">
+        <div class="flow-step"><strong>1. Identify</strong> What is POPPA’S Option Scanner?</div>
+        <div class="flow-step"><strong>2. Trust</strong> Who is Walter “Poppa” S.?</div>
+        <div class="flow-step"><strong>3. Educate</strong> What is Iron Condor trading?</div>
+        <div class="flow-step"><strong>4. Method</strong> What does the scanner teach?</div>
+        <div class="flow-step"><strong>5. Choose</strong> Start with Academy or enter the Lab.</div>
+        <div class="flow-step"><strong>6. Review</strong> Use the Scanner Board and Research Ticket.</div>
+      </div>
+    </section>
+
+    <section class="card section" id="scanner-language">
+      <h2>Required Scanner Language Template</h2>
+      <div class="grid">
+        <article class="mini-card">
+          <span class="tag">Research Band</span>
+          <h3>Build Your Research Band</h3>
+          <p>Choose the research filters the scanner uses to show matching Iron Condor candidates. This is not building a trade.</p>
+        </article>
+        <article class="mini-card">
+          <span class="tag">Run</span>
+          <h3>Run Scanner</h3>
+          <p>Show candidates that match the selected research band. Avoid “best trades,” “signals,” or recommendation language.</p>
+        </article>
+        <article class="mini-card">
+          <span class="tag">Pagination</span>
+          <h3>Load Next 50 Candidates</h3>
+          <p>Loads the next group of matching candidates so the page stays fast, organized, and readable.</p>
+        </article>
+        <article class="mini-card">
+          <span class="tag">Board</span>
+          <h3>Scanner Board</h3>
+          <p>The candidate review board. Each row is one educational candidate structure, not a recommendation list.</p>
+        </article>
+        <article class="mini-card">
+          <span class="tag">Ticket</span>
+          <h3>Research Ticket</h3>
+          <p>Organizes one candidate’s details for educational review. It is not a broker order ticket and does not place a trade.</p>
+        </article>
+        <article class="mini-card">
+          <span class="tag">Readout</span>
+          <h3>Scanner Readout</h3>
+          <p>Use “Scanner Readout” or “Review Status.” Do not use “Signal” as a public-facing label.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card section" id="error-standards">
+      <h2>Public Message Standards</h2>
+      <p>The UX Architect should preserve a polished public experience and remove infrastructure/vendor language from public view.</p>
+      <div class="grid">
+        <article class="mini-card protected">
+          <span class="tag">Remove</span>
+          <h3>Do Not Show Public Users</h3>
+          <ul>
+            <li>Supabase</li>
+            <li>Netlify</li>
+            <li>Database</li>
+            <li>API / endpoint</li>
+            <li>JSON</li>
+            <li>Table unreachable</li>
+            <li>Backend/function errors</li>
+          </ul>
+        </article>
+        <article class="mini-card">
+          <span class="tag">Loading</span>
+          <h3>Scanner Board Preparing</h3>
+          <p>Today’s scanner board is still being prepared. Please try again shortly.</p>
+        </article>
+        <article class="mini-card">
+          <span class="tag">No Results</span>
+          <h3>Research Band Empty</h3>
+          <p>No candidates matched your current research band. Try widening your filters.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card section" id="ux-architect-brief">
+      <h2>UX Architect Working Brief</h2>
+      <p>This page is the template location for the UX Architect’s proposed site experience. The live homepage remains unchanged while this draft evolves.</p>
+      <ul>
+        <li>Keep the homepage promotional and educational.</li>
+        <li>Keep the scanner on its own dedicated Live Scanner Lab page.</li>
+        <li>Promote the Academy from the homepage.</li>
+        <li>Make every page vital to the complete site experience.</li>
+        <li>Use sitewide navigation on every page.</li>
+        <li>Keep all language educational, compliance-conscious, and user-friendly.</li>
+        <li>Do not expose vendor or infrastructure names to public users.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p><strong>Internal preview only.</strong> This page is a safe UX architecture sandbox. It does not replace the restored homepage unless a separate approval and promotion request is issued.</p>
+    </footer>
+  </main>
+</body>
+</html>

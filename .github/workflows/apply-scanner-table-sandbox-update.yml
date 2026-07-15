@@ -1,0 +1,54 @@
+name: Apply Scanner Table Sandbox Update
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-scanner-table-sandbox-update.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch protected sandbox page only
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('scanner-table-preview.html')
+          s = p.read_text(encoding='utf-8')
+
+          # Disable the legacy controller on this protected sandbox page only.
+          s = re.sub(r'<script[^>]+src=["\'][^"\']*preview-rescan-timer\.js[^"\']*["\'][^>]*></script>', '', s, flags=re.I)
+          s = re.sub(r'<script[^>]+src=["\'][^"\']*scanner-table-sandbox-v2\.js[^"\']*["\'][^>]*></script>', '', s, flags=re.I)
+
+          marker = '<script src="/scanner-table-sandbox-v2.js?v=20260704-pl12"></script>'
+          if '</body>' not in s:
+            raise SystemExit('scanner-table-preview.html is missing </body>')
+          s = s.replace('</body>', marker + '</body>', 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Verify sandbox-only scope
+        run: |
+          grep -q 'scanner-table-sandbox-v2.js' scanner-table-preview.html
+          test -f scanner-table-sandbox-v2.js
+          git diff --name-only | grep -qx 'scanner-table-preview.html'
+
+      - name: Commit sandbox update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scanner-table-preview.html
+          git commit -m "Apply scanner table sandbox Punch List 1 and 2"
+          git push origin main

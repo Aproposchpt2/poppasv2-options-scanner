@@ -1,0 +1,79 @@
+name: Patch Preview Hover UX
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/patch-preview-hover-ux.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-preview-hover-ux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch candidate row and nav hover UX
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('scanner-table-preview.html')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          # Add hover/active CSS without changing page structure.
+          css_marker = ".navlinks a{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:rgba(244,248,255,.72)}"
+          css_patch = ".navlinks a{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;font-weight:700;color:rgba(244,248,255,.72);border:1px solid transparent;border-radius:999px;padding:8px 12px;transition:.18s ease}.navlinks a:hover,.navlinks a.nav-active{color:#04101f;background:linear-gradient(135deg,#fff,var(--cyan));border-color:rgba(123,220,255,.65);box-shadow:0 0 22px rgba(30,167,255,.24)}"
+          if css_marker in text and 'nav-active' not in text:
+              text = text.replace(css_marker, css_patch, 1)
+
+          table_css_marker = "td{color:rgba(235,242,255,.88);font-size:.92rem}"
+          table_css_patch = "td{color:rgba(235,242,255,.88);font-size:.92rem}#resultsBody tr{cursor:pointer;transition:.16s ease}#resultsBody tr:hover td{background:rgba(30,167,255,.09)}#resultsBody tr.row-active td{background:rgba(123,220,255,.13);box-shadow:inset 3px 0 0 var(--cyan)}#resultsBody tr td:nth-child(2){font-weight:900;color:#dbe7ff}#resultsBody tr:hover td:nth-child(2),#resultsBody tr.row-active td:nth-child(2){color:var(--cyan);text-decoration:underline;text-underline-offset:4px}"
+          if table_css_marker in text and 'row-active' not in text:
+              text = text.replace(table_css_marker, table_css_patch, 1)
+
+          # Add row-active class to selected row in render loop.
+          row_old = "<tr onclick=\"showTicket(${i})\">"
+          row_new = "<tr class=\"${i===selectedRow?'row-active':''}\" onclick=\"showTicket(${i})\">"
+          if row_old in text and 'selectedRow' not in text:
+              text = text.replace("let allRows=[],lastRows=[],sortState={key:null,dir:'asc'},lastGen=null;", "let allRows=[],lastRows=[],sortState={key:null,dir:'asc'},lastGen=null,selectedRow=0;", 1)
+              text = text.replace(row_old, row_new, 1)
+
+          # Ensure showTicket updates selected row and re-highlights without recursion.
+          show_old = "function showTicket(i){let r=lastRows[i];if(!r)return;$('ticketBox').innerHTML="
+          show_new = "function showTicket(i){selectedRow=i;document.querySelectorAll('#resultsBody tr').forEach((tr,idx)=>tr.classList.toggle('row-active',idx===i));let r=lastRows[i];if(!r)return;$('ticketBox').innerHTML="
+          if show_old in text and "classList.toggle('row-active'" not in text:
+              text = text.replace(show_old, show_new, 1)
+
+          # Add nav active click behavior before initial runScan call.
+          nav_js = "document.querySelectorAll('.navlinks a').forEach(a=>a.addEventListener('click',()=>{document.querySelectorAll('.navlinks a').forEach(x=>x.classList.remove('nav-active'));a.classList.add('nav-active')}));"
+          marker = "$('yr').textContent=new Date().getFullYear();runScan();"
+          if marker in text and "nav-active" not in text.split('<script>')[-1]:
+              text = text.replace(marker, nav_js + marker, 1)
+
+          if text == original:
+              print('No changes needed or markers not found.')
+          else:
+              path.write_text(text, encoding='utf-8')
+              print('Preview hover UX patch applied.')
+          PY
+
+      - name: Commit patch if changed
+        run: |
+          if git diff --quiet; then
+            echo "No file changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scanner-table-preview.html
+          git commit -m "Improve preview row and nav hover UX"
+          git push

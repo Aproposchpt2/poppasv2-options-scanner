@@ -1,0 +1,52 @@
+name: Apply Approved DTE Change
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-approved-dte-change.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply approved scanner changes
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          html = Path('scanner-table-preview.html')
+          s = html.read_text(encoding='utf-8')
+          old = '<label>DTE window<input id="dteWindow" type="text" value="15-45" readonly title="Static Version 3 DTE window: 15 to 45 days"></label>'
+          new = '<label>DTE window<select id="dteWindow"><option value="15-45" selected>15–45 Days — Standard</option><option value="0-45">0–45 Days — Include Near-Term Expirations</option></select></label>'
+          if old not in s:
+              raise SystemExit('Locked DTE field not found')
+          s = s.replace(old, new, 1)
+          html.write_text(s, encoding='utf-8')
+
+          js = Path('preview-rescan-timer.js')
+          j = js.read_text(encoding='utf-8')
+          target = "card.innerHTML='<div class=\"scan-activity-head\"><span class=\"scan-dot\"></span><span>Scanner Activity</span></div><div id=\"scannerActivityMessage\" class=\"scan-activity-message\">Waiting to start scanning</div><div class=\"scan-stats\"><div class=\"scan-stat\"><span>Total records found</span><strong id=\"scanTotalFound\">—</strong></div><div class=\"scan-stat\"><span>Band matches</span><strong id=\"scanBandMatches\">—</strong></div><div class=\"scan-stat\"><span>Displayed</span><strong id=\"scanDisplayedCount\">—</strong></div></div>';"
+          replacement = "card.innerHTML='<div class=\"scan-activity-head\"><span class=\"scan-dot\"></span><span>Scanner Activity</span></div><div id=\"scannerActivityMessage\" class=\"scan-activity-message\">Waiting to start scanning</div><div class=\"scan-stats\"><div class=\"scan-stat\"><span>Total records found</span><strong id=\"scanTotalFound\">—</strong></div><div class=\"scan-stat\"><span>Band matches</span><strong id=\"scanBandMatches\">—</strong></div><div class=\"scan-stat\"><span>Displayed</span><strong id=\"scanDisplayedCount\">—</strong></div></div><div class=\"note\" style=\"margin-top:12px\"><strong>Educational review only.</strong> Near-term options may experience accelerated time decay, wider price movement, and increased assignment risk. Verify expiration, liquidity, pricing, earnings, and defined risk independently before making any decision.</div>';"
+          if target in j:
+              j = j.replace(target, replacement, 1)
+          elif 'Near-term options may experience accelerated time decay' not in j:
+              raise SystemExit('Scanner status card target not found')
+          js.write_text(j, encoding='utf-8')
+          PY
+
+      - name: Commit approved change set
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scanner-table-preview.html preview-rescan-timer.js
+          git commit -m "Apply approved DTE selector and status-card notice"
+          git push origin main

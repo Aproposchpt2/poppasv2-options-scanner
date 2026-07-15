@@ -1,34 +1,194 @@
-// POPPAS PRO — fast server-side filter over the cached full-board scan.
-// Revised version: supports leg-level liquidity, max all-leg bid/ask spread, selected width,
-// safer review-status wording, and explicit earnings/data-source metadata.
+// POPPA'S Option Scanner — unfiltered cached-board results endpoint.
+// Punch-list rule: midpoint credit, after-cost ROC, separate put/call anchors,
+// Lower Anchor P(OTM), and exact-width validation before a row can render.
+
 import { getStore } from "@netlify/blobs";
 
-const num = (v, d) => {
+const COMMISSION_DOLLARS = 2.40;
+const FEES_DOLLARS = 0.04;
+const TOTAL_TRADING_COST_DOLLARS = COMMISSION_DOLLARS + FEES_DOLLARS;
+
+const num = (v, d = null) => {
   if (v === null || v === undefined || v === "") return d;
-  const n = +v;
+  const n = Number(v);
   return Number.isFinite(n) ? n : d;
 };
-const json = (o, maxAge) => new Response(JSON.stringify(o), {
+const round = (v, p = 2) => Number.isFinite(Number(v)) ? +Number(v).toFixed(p) : null;
+const has = v => Number.isFinite(Number(v));
+const json = (o, maxAge = 600) => new Response(JSON.stringify(o), {
   status: 200,
-  headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=" + (maxAge || 600) }
+  headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${maxAge}` }
 });
-const rocOf = r => (r.roc != null ? r.roc : (r.credit && r.width && r.width - r.credit > 0 ? r.credit / (r.width - r.credit) * 100 : 0));
-const probOf = r => (r.prob != null ? r.prob : Math.round((r.probOtm || 0) * 100));
-const shortPutOI = r => num(r.shortPutOI ?? r.putShortOI ?? r.oiMin, null);
-const shortCallOI = r => num(r.shortCallOI ?? r.callShortOI ?? r.oiMin, null);
-const longPutOI = r => num(r.longPutOI, null);
-const longCallOI = r => num(r.longCallOI, null);
-const hasValue = v => v !== null && v !== undefined && Number.isFinite(+v);
-const minKnownShortOI = r => {
-  const vals = [shortPutOI(r), shortCallOI(r)].filter(hasValue);
-  if (vals.length) return Math.min(...vals);
-  return num(r.openInterest ?? r.oi, 0); // backwards-compatible fallback for old stored boards
+
+const legMid = leg => {
+  const bid = num(leg?.bidRaw);
+  const ask = num(leg?.askRaw);
+  return bid !== null && ask !== null ? round((bid + ask) / 2, 4) : null;
 };
-const minKnownLongOI = r => {
-  const vals = [longPutOI(r), longCallOI(r)].filter(hasValue);
-  return vals.length ? Math.min(...vals) : null;
+
+const probabilityFromLeg = leg => {
+  const raw = num(leg?.probabilityOTMRaw);
+  if (raw !== null) return { value: raw, source: "Schwab raw", method: "Schwab/TOS API-provided Probability OTM", fallbackReason: null };
+  const delta = Math.abs(num(leg?.deltaRaw, 0));
+  return { value: round(1 - delta, 3), source: "POPPA calculated", method: "Delta approximation: 1 - abs(delta)", fallbackReason: "Schwab Probability OTM field unavailable" };
 };
-const spreadOf = r => hasValue(r.spreadMax) ? +r.spreadMax : (hasValue(r.spread) ? +r.spread : null);
+
+function validateStrikes(r) {
+  const requestedWidth = num(r.requestedWidth ?? r.width);
+  const shortPut = num(r.shortPut);
+  const longPut = num(r.longPut);
+  const shortCall = num(r.shortCall);
+  const longCall = num(r.longCall);
+  const actualPutWidth = shortPut !== null && longPut !== null ? round(shortPut - longPut, 4) : null;
+  const actualCallWidth = shortCall !== null && longCall !== null ? round(longCall - shortCall, 4) : null;
+  const symbolsPresent = Boolean(r.shortPutContractSymbol && r.longPutContractSymbol && r.shortCallContractSymbol && r.longCallContractSymbol);
+  const exactPutWingFound = requestedWidth !== null && actualPutWidth === requestedWidth;
+  const exactCallWingFound = requestedWidth !== null && actualCallWidth === requestedWidth;
+  const equalWidthConfirmed = actualPutWidth !== null && actualPutWidth === actualCallWidth;
+  const sameExpiration = !r.rawLegs || [r.rawLegs.shortPut, r.rawLegs.longPut, r.rawLegs.shortCall, r.rawLegs.longCall]
+    .filter(Boolean).every(leg => !leg.expirationDate || leg.expirationDate === r.expiry);
+
+  let strikeValidationStatus = "PASS";
+  let strikeValidationReason = "Exact strikes confirmed";
+  if (!symbolsPresent) { strikeValidationStatus = "REJECTED"; strikeValidationReason = "One or more Schwab contract symbols are missing"; }
+  else if (!sameExpiration) { strikeValidationStatus = "REJECTED"; strikeValidationReason = "Expiration mismatch"; }
+  else if (!exactPutWingFound) { strikeValidationStatus = "REJECTED"; strikeValidationReason = `Exact $${requestedWidth} put wing unavailable`; }
+  else if (!exactCallWingFound) { strikeValidationStatus = "REJECTED"; strikeValidationReason = `Exact $${requestedWidth} call wing unavailable`; }
+  else if (!equalWidthConfirmed) { strikeValidationStatus = "REJECTED"; strikeValidationReason = "Put and call spread widths are unequal"; }
+
+  return {
+    requestedWidth,
+    actualPutWidth,
+    actualCallWidth,
+    exactPutWingFound,
+    exactCallWingFound,
+    equalWidthConfirmed,
+    sameExpiration,
+    symbolsPresent,
+    strikeValidationStatus,
+    strikeValidationReason
+  };
+}
+
+function pricing(r) {
+  const legs = r.rawLegs || {};
+  const sp = legs.shortPut, lp = legs.longPut, sc = legs.shortCall, lc = legs.longCall;
+  const allLegsPresent = Boolean(sp && lp && sc && lc);
+
+  const naturalCredit = allLegsPresent
+    ? round((num(sc.bidRaw, 0) + num(sp.bidRaw, 0)) - (num(lc.askRaw, 0) + num(lp.askRaw, 0)), 4)
+    : round(r.naturalCredit ?? r.credit, 4);
+
+  const midpointCredit = allLegsPresent
+    ? round((legMid(sc) + legMid(sp)) - (legMid(lc) + legMid(lp)), 4)
+    : round(r.midpointCredit ?? r.midCredit ?? r.credit, 4);
+
+  const displayedCredit = midpointCredit;
+  const width = num(r.requestedWidth ?? r.width);
+  const grossCreditDollars = displayedCredit !== null ? round(displayedCredit * 100, 2) : null;
+  const netCreditAfterCosts = grossCreditDollars !== null ? round(grossCreditDollars - TOTAL_TRADING_COST_DOLLARS, 2) : null;
+  const grossMaxRisk = width !== null && grossCreditDollars !== null ? round(width * 100 - grossCreditDollars, 2) : null;
+  const netMaxRiskAfterCosts = width !== null && netCreditAfterCosts !== null ? round(width * 100 - netCreditAfterCosts, 2) : null;
+  const grossROC = grossCreditDollars !== null && grossMaxRisk > 0 ? round(grossCreditDollars / grossMaxRisk * 100, 2) : null;
+  const rocAfterCommissionAndFees = netCreditAfterCosts !== null && netMaxRiskAfterCosts > 0 ? round(netCreditAfterCosts / netMaxRiskAfterCosts * 100, 2) : null;
+
+  return {
+    naturalCredit,
+    midpointCredit,
+    displayedCredit,
+    credit: displayedCredit,
+    creditSource: "POPPA calculated from Schwab bid/ask midpoint values",
+    creditMethod: "Short Put Mid + Short Call Mid - Long Put Mid - Long Call Mid; each Mid = (Bid + Ask) / 2",
+    commission: COMMISSION_DOLLARS,
+    fees: FEES_DOLLARS,
+    totalTradingCost: TOTAL_TRADING_COST_DOLLARS,
+    grossCreditDollars,
+    netCreditAfterCosts,
+    grossMaxRisk,
+    netMaxRiskAfterCosts,
+    grossROC,
+    roc: grossROC,
+    rocAfterCommissionAndFees,
+    rocAfterCosts: rocAfterCommissionAndFees,
+    rocSource: "POPPA calculated",
+    rocMethod: "Gross ROC = Gross Credit / Gross Max Risk; After-cost ROC = Net Credit After Costs / Net Max Risk After Costs"
+  };
+}
+
+function anchors(r) {
+  const put = probabilityFromLeg(r.rawLegs?.shortPut || { probabilityOTMRaw: r.putProbOtm, deltaRaw: r.rawLegs?.shortPut?.deltaRaw });
+  const call = probabilityFromLeg(r.rawLegs?.shortCall || { probabilityOTMRaw: r.callProbOtm, deltaRaw: r.rawLegs?.shortCall?.deltaRaw });
+  const lower = Math.min(num(put.value, 0), num(call.value, 0));
+  return {
+    anchorPutOTM: round(put.value, 3),
+    anchorCallOTM: round(call.value, 3),
+    putProbOtm: round(put.value, 3),
+    callProbOtm: round(call.value, 3),
+    lowerAnchorPOTM: round(lower, 3),
+    lowerAnchorPOTMPercent: round(lower * 100, 1),
+    probOtm: round(lower, 3),
+    prob: round(lower * 100, 1),
+    lowerAnchorLabel: "Lower Anchor P(OTM)",
+    lowerAnchorDisclosure: "Lower of the short-put and short-call Probability OTM values; not a whole-condor probability.",
+    anchorPutSource: put.source,
+    anchorCallSource: call.source,
+    anchorPutMethod: put.method,
+    anchorCallMethod: call.method,
+    anchorPutFallbackReason: put.fallbackReason,
+    anchorCallFallbackReason: call.fallbackReason
+  };
+}
+
+function normalizedRow(r) {
+  const strike = validateStrikes(r);
+  const price = pricing({ ...r, requestedWidth: strike.requestedWidth });
+  const anchor = anchors(r);
+  const reviewStatus = strike.strikeValidationStatus === "PASS"
+    ? (r.reviewStatus || (r.passed ? "Matches primary filters ✓" : (r.note || "Candidate for manual review")))
+    : `REJECTED — ${strike.strikeValidationReason}`;
+
+  return {
+    ...r,
+    ...strike,
+    ...price,
+    ...anchor,
+    width: strike.requestedWidth,
+    reviewStatus,
+    reviewStatusSource: "POPPA calculated",
+    sourceAuditEnabled: true,
+    pricingAuditEnabled: true,
+    exactWidthValidationEnabled: true,
+    sourceLabels: {
+      ...(r.sourceLabels || {}),
+      anchorPutOTM: anchor.anchorPutSource,
+      anchorCallOTM: anchor.anchorCallSource,
+      lowerAnchorPOTM: "POPPA calculated",
+      naturalCredit: "POPPA calculated from Schwab natural bid/ask values",
+      midpointCredit: "POPPA calculated from Schwab bid/ask midpoint values",
+      displayedCredit: "POPPA calculated from Schwab bid/ask midpoint values",
+      grossROC: "POPPA calculated",
+      rocAfterCommissionAndFees: "POPPA calculated",
+      strikeValidation: "POPPA calculated from Schwab contract strikes and symbols"
+    },
+    fieldLineage: {
+      ...(r.fieldLineage || {}),
+      anchorPutOTM: { rawValue: r.rawLegs?.shortPut?.probabilityOTMRaw ?? null, displayValue: anchor.anchorPutOTM, source: anchor.anchorPutSource, method: anchor.anchorPutMethod, fallbackReason: anchor.anchorPutFallbackReason },
+      anchorCallOTM: { rawValue: r.rawLegs?.shortCall?.probabilityOTMRaw ?? null, displayValue: anchor.anchorCallOTM, source: anchor.anchorCallSource, method: anchor.anchorCallMethod, fallbackReason: anchor.anchorCallFallbackReason },
+      lowerAnchorPOTM: { rawValue: null, displayValue: anchor.lowerAnchorPOTM, source: "POPPA calculated", method: "Minimum of Anchor P(OTM) and Anchor C(OTM)" },
+      displayedCredit: { rawValue: null, displayValue: price.displayedCredit, source: price.creditSource, method: price.creditMethod },
+      rocAfterCommissionAndFees: { rawValue: null, displayValue: price.rocAfterCommissionAndFees, source: "POPPA calculated", method: price.rocMethod },
+      strikeValidation: { rawValue: null, displayValue: strike.strikeValidationStatus, source: "POPPA calculated", method: "Exact requested width on both sides; same expiration; all Schwab contract symbols present" }
+    }
+  };
+}
+
+function sortRows(rows, rankBy, passersTop) {
+  return rows.sort((a, b) => {
+    if (passersTop && (b.passed ? 1 : 0) !== (a.passed ? 1 : 0)) return (b.passed ? 1 : 0) - (a.passed ? 1 : 0);
+    if (rankBy === "roc") return num(b.roc, -999) - num(a.roc, -999);
+    return num(b.edge ?? b.score, 0) - num(a.edge ?? a.score, 0) || num(b.roc, -999) - num(a.roc, -999);
+  });
+}
 
 export default async (req) => {
   const store = getStore("poppas-scan");
@@ -42,97 +202,46 @@ export default async (req) => {
     } catch (_) {}
     return json({
       building: true,
-      scanMode: "Building full scan…",
-      earningsShield: "verify before trade",
-      probabilityDisclosure: "Anchor-leg probability only; not guaranteed whole-condor probability.",
+      dataSource: "Schwab/TOS Market Data API",
+      scanMode: "Building Schwab/TOS market-data scan…",
+      lowerAnchorLabel: "Lower Anchor P(OTM)",
+      pricingMethod: "Bid/ask midpoint",
+      totalTradingCost: TOTAL_TRADING_COST_DOLLARS,
       results: []
     }, 30);
   }
 
-  if (board.building) {
-    const stale = Date.now() - new Date(board.generatedAt || 0).getTime() > 3 * 60 * 1000;
-    if (stale) {
-      try {
-        const base = process.env.URL || process.env.DEPLOY_URL;
-        if (base) fetch(`${base}/.netlify/functions/scan-build-background?continue=1`, { method: "POST" });
-      } catch (_) {}
-    }
-  }
-
   const q = (() => { try { return new URL(req.url).searchParams; } catch (_) { return new URLSearchParams(); } })();
-  const hasFilters = [...q.keys()].length > 0;
-  const selectedWidth = q.get("width") === "auto" ? 0 : num(q.get("width"), 0);
+  const includeRejected = q.get("includeRejected") === "true";
+  const rankBy = q.get("rankBy") || "edge";
+  const passersTop = ["yes", "true"].includes(q.get("passersTop"));
 
-  let baseRows = board.results.filter(r => {
-    if (!(r.width === 5 || r.width === 10)) return false;
-    if (selectedWidth && Math.abs((r.width || 0) - selectedWidth) > 0.01) return false;
-    return true;
-  });
+  const normalized = board.results.map(normalizedRow);
+  const rejectedCount = normalized.filter(r => r.strikeValidationStatus !== "PASS").length;
+  const rows = sortRows(includeRejected ? normalized : normalized.filter(r => r.strikeValidationStatus === "PASS"), rankBy, passersTop);
 
-  const meta = {
-    strategy: board.strategy || "SP500_Tight_Condor_Scan",
-    scanMode: board.scanMode || "Cached delayed/EOD scan",
-    dataSource: board.dataSource || "Stored scan board",
+  return json({
+    strategy: board.strategy || "SP500_Tight_Condor_Scan_v3_Schwab_Lineage",
+    scanMode: board.scanMode || "Schwab/TOS market-data EOD snapshot · source audit enabled",
+    dataSource: board.dataSource || "Schwab/TOS Market Data API",
+    dataMode: board.dataMode || "Schwab market-data EOD snapshot",
     generatedAt: board.generatedAt,
     universeCount: board.universeCount,
     scanned: board.scanned,
-    withCondor: board.withCondor,
-    passCount: board.passCount,
-    earningsShield: board.earningsShield || "verify before trade",
-    earningsFlagged: board.earningsFlagged,
-    probabilityDisclosure: "Anchor-leg probability only; not guaranteed whole-condor probability.",
-    building: !!board.building,
-    progress: board.progress || null,
-    total: board.withCondor
-  };
-
-  if (!hasFilters) return json({ ...meta, matched: baseRows.length, results: baseRows }, board.building ? 60 : 600);
-
-  const rocMin = num(q.get("rocMin"), 0), rocMax = num(q.get("rocMax"), 1e9);
-  const minProb = num(q.get("minProb"), 0), minIV = num(q.get("ivMin"), 0), minMonthlyOI = num(q.get("minOI"), 0);
-  const minShortOI = num(q.get("minShortOI"), 0), minLongOI = num(q.get("minLongOI"), 0);
-  const maxSpread = num(q.get("maxSpread"), 1e9);
-  const dmin = num(q.get("dteMin"), 0), dmax = num(q.get("dteMax"), 1e9);
-  const exEarn = q.get("excludeEarnings") === "yes";
-  const idx = q.get("idx") || "both";
-  const rankBy = q.get("rankBy") || "roc";
-  const passersTop = q.get("passersTop") === "yes";
-  const max = num(q.get("max"), 12);
-
-  let rows = baseRows.filter(r => {
-    const roc = rocOf(r), prob = probOf(r), iv = r.iv || 0, monthlyOI = r.openInterest || r.oi || 0, dte = r.dte || 0;
-    if (roc < rocMin || roc > rocMax) return false;
-    if (prob < minProb) return false;
-    if (iv < minIV) return false;
-    if (monthlyOI < minMonthlyOI) return false;
-    if (minKnownShortOI(r) < minShortOI) return false;
-    const minLong = minKnownLongOI(r);
-    if (minLong !== null && minLong < minLongOI) return false;
-    const spr = spreadOf(r);
-    if (spr !== null && spr > maxSpread) return false;
-    if (dte < dmin || dte > dmax) return false;
-    if (exEarn && r.earnings) return false;
-    if (!(idx === "both" || r.market === "both" || r.market === idx)) return false;
-    return true;
-  }).map(r => ({
-    ...r,
-    roc: +rocOf(r).toFixed(2),
-    prob: probOf(r),
-    shortPutOI: shortPutOI(r),
-    shortCallOI: shortCallOI(r),
-    longPutOI: longPutOI(r),
-    longCallOI: longCallOI(r),
-    spreadMax: spreadOf(r),
-    reviewStatus: r.passed ? "Matches primary filters ✓" : (r.note || "Candidate for manual review")
-  }));
-
-  rows.sort((a, b) => {
-    if (passersTop && (b.passed ? 1 : 0) - (a.passed ? 1 : 0)) return (b.passed ? 1 : 0) - (a.passed ? 1 : 0);
-    if (rankBy === "edge") return (b.edge || b.score || 0) - (a.edge || a.score || 0) || rocOf(b) - rocOf(a);
-    return rocOf(b) - rocOf(a);
-  });
-
-  const matched = rows.length;
-  rows = rows.slice(0, max);
-  return json({ ...meta, matched, returned: rows.length, results: rows }, board.building ? 60 : 600);
+    withCondor: rows.length,
+    passCount: rows.filter(r => r.passed).length,
+    rejectedInvalidStrikeCount: rejectedCount,
+    includeRejected,
+    lowerAnchorLabel: "Lower Anchor P(OTM)",
+    lowerAnchorDisclosure: "The lower of Anchor P(OTM) and Anchor C(OTM); not a guaranteed whole-condor probability.",
+    pricingMethod: "Bid/ask midpoint",
+    creditDisclosure: "Displayed Credit is POPPA calculated from Schwab leg midpoints.",
+    commission: COMMISSION_DOLLARS,
+    fees: FEES_DOLLARS,
+    totalTradingCost: TOTAL_TRADING_COST_DOLLARS,
+    exactWidthValidationEnabled: true,
+    exportEndpoint: "/.netlify/functions/scan-export",
+    returned: rows.length,
+    results: rows
+  }, board.building ? 60 : 600);
 };

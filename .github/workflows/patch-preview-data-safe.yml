@@ -1,0 +1,29 @@
+name: Patch Preview Data Safe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-preview-data-safe.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch file
+        run: |
+          echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnAgPSBQYXRoKCdzY2FubmVyLXRhYmxlLXByZXZpZXcuaHRtbCcpCnMgPSBwLnJlYWRfdGV4dChlbmNvZGluZz0ndXRmLTgnKQpvbGQgPSAnc2Nhbi1yZXN1bHRzP190cz0nCm5ldyA9ICdzY2FuLXJlc3VsdHMtcHJldmlldz9saW1pdD01MDAwJl90cz0nCmlmIG9sZCBpbiBzOgogICAgcyA9IHMucmVwbGFjZShvbGQsIG5ldykKICAgIHAud3JpdGVfdGV4dChzLCBlbmNvZGluZz0ndXRmLTgnKQo=' | base64 -d > /tmp/patch_preview.py
+          python3 /tmp/patch_preview.py
+      - name: Commit
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add scanner-table-preview.html
+          git commit -m "Point preview page to safe live data source"
+          git push

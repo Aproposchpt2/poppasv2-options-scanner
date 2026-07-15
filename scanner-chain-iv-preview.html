@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POPPA’S Scanner Preview · Chain IV Label</title>
+  <meta name="description" content="POPPA’S scanner preview with IV visibly labeled as Chain IV. Data and scanner logic are unchanged." />
+  <style>
+    body{margin:0;min-height:100vh;background:#020816;color:#dce8ff;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;text-align:center;padding:24px}
+    .box{max-width:720px;border:1px solid rgba(191,214,255,.25);border-radius:18px;padding:24px;background:rgba(255,255,255,.045)}
+    .small{color:#8fa7d1;font-size:.9rem}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Loading POPPA’S Scanner…</h1>
+    <p>Applying approved UI label change: IV → Chain IV.</p>
+    <p class="small">Scanner data, filters, and backend logic are unchanged.</p>
+  </div>
+  <script>
+    (async function(){
+      try {
+        const response = await fetch('/scanner-table-preview.html', { cache: 'no-store' });
+        let html = await response.text();
+
+        // UI LABEL-ONLY CHANGE.
+        // Do not change database field keys, endpoint params, scanner logic, filters, or values.
+        html = html
+          .replace(/Min Monthly Chain IV \(%\)/g, 'Min Chain IV (%)')
+          .replace(/Monthly Chain IV/g, 'Chain IV')
+          .replace(/>IV<\/th>/g, '>Chain IV</th>')
+          .replace(/>IV<\/span>/g, '>Chain IV</span>')
+          .replace(/>IV Status</g, '>IV Status<');
+
+        document.open();
+        document.write(html);
+        document.close();
+      } catch (error) {
+        document.body.innerHTML = '<div class="box"><h1>Scanner could not load</h1><p>'+String(error.message || error)+'</p></div>';
+      }
+    })();
+  </script>
+</body>
+</html>

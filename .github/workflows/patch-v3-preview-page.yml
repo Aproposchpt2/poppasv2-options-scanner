@@ -1,0 +1,172 @@
+name: Patch Version 3 Preview Page
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/patch-v3-preview-page.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-v3-preview-page:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply Version 3 preview-page patches
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('scanner-table-preview.html')
+          text = path.read_text(encoding='utf-8')
+          original = text
+
+          def replace_once(old, new):
+              global text
+              if old in text:
+                  text = text.replace(old, new, 1)
+                  return True
+              return False
+
+          # --- Monthly Chain IV tooltip / label cleanup ---
+          text = text.replace('Min Monthly Chain IV (%)<input id="ivMin"', 'Min Monthly Chain IV (%)<input title="CBOE-derived Monthly Chain IV may differ from broker platforms that use proprietary volatility smoothing." id="ivMin"')
+          text = text.replace('<b>IV</b> — monthly chain implied volatility.', '<b>Monthly Chain IV</b> — CBOE-derived Monthly Chain IV may differ from broker platforms that use proprietary volatility smoothing.')
+
+          # --- Static DTE field: keep only 15-45 days ---
+          dte_old = '<label>DTE window<select id="dteWindow"><option value="15-45" selected>15 to 45 days</option><option value="21-45">21 to 45 days</option><option value="30-60">30 to 60 days</option></select></label>'
+          dte_new = '<label>DTE window<input id="dteWindow" type="text" value="15-45" readonly title="Static Version 3 DTE window: 15 to 45 days"></label>'
+          replace_once(dte_old, dte_new)
+
+          # --- IV Status field, default Fair ---
+          iv_anchor = '<label>Min Monthly Chain IV (%)<input title="CBOE-derived Monthly Chain IV may differ from broker platforms that use proprietary volatility smoothing." id="ivMin" type="number" value="30"></label>'
+          if 'id="ivStatusSel"' not in text and iv_anchor in text:
+              text = text.replace(iv_anchor, iv_anchor + '<label>IV Status<select id="ivStatusSel"><option value="Inflated">Inflated</option><option value="Deflated">Deflated</option><option value="Fair" selected>Fair</option></select></label>', 1)
+
+          # --- EM Status field, default Outside Expected Move ---
+          em_anchor = '<label>Earnings risk<select id="excludeEarnings"><option value="yes" selected>Exclude earnings in window</option><option value="no">Include but flag</option></select></label>'
+          if 'id="emStatusSel"' not in text and em_anchor in text:
+              text = text.replace(em_anchor, em_anchor + '<label>EM Status<select id="emStatusSel"><option value="outside" selected>Outside Expected Move</option><option value="outsideNear">Outside or Near Expected Move</option><option value="near">Near Expected Move</option><option value="inside">Inside Expected Move</option><option value="all">All EM Statuses</option></select></label>', 1)
+
+          # --- Diagnostics readout after scan progress box ---
+          diag_html = '<div class="scanbox" id="scanDiagnostics"><strong>Scan Diagnostics:</strong><div class="cols"><div><b>Symbols in Universe</b><br><span id="diagUniverse">—</span></div><div><b>Symbols Pulled Successfully</b><br><span id="diagPulled">—</span></div><div><b>Raw Contracts Stored</b><br><span id="diagContracts">—</span></div><div><b>Condor Structures Generated</b><br><span id="diagCondors">—</span></div><div><b>Active Filter Matches</b><br><span id="diagMatches">—</span></div><div><b>Displayed Results</b><br><span id="diagDisplayed">—</span></div></div></div>'
+          progress_marker = '<div class="scanbox" id="scanProgress"><strong>Status:</strong> Waiting for source-of-truth scan test.</div>'
+          if 'id="scanDiagnostics"' not in text and progress_marker in text:
+              text = text.replace(progress_marker, progress_marker + diag_html, 1)
+
+          # --- Add CSV export button if not present ---
+          if 'id="downloadCsvBtn"' not in text:
+              head_marker = '<span class="pill" id="scanStamp">—</span></div><div class="table-wrap">'
+              head_new = '<span class="pill" id="scanStamp">—</span><button class="btn secondary" id="downloadCsvBtn">Download CSV</button></div><div class="table-wrap">'
+              replace_once(head_marker, head_new)
+
+          # --- Add helper functions after review(). ---
+          review_fn = "function review(r){return r.reviewStatus||r.note||(r.passed?'Matches primary filters':'Candidate for manual review')}"
+          helpers = review_fn + "function ivStatusOf(r){let v=num(r.iv);return v<=40?'Deflated':v<=60?'Fair':'Inflated'}function emText(r){let e=em(r);return e?e.status:'Verify'}function emClass(status){status=String(status||'').toLowerCase();if(status.includes('outside'))return 'em-out';if(status.includes('near'))return 'em-near';if(status.includes('inside'))return 'em-in';return ''}function emPass(r,mode){let s=emText(r).toLowerCase();if(mode==='all')return true;if(mode==='outside')return s.includes('outside');if(mode==='near')return s.includes('near');if(mode==='inside')return s.includes('inside');if(mode==='outsideNear')return s.includes('outside')||s.includes('near');return true}"
+          if review_fn in text and 'function ivStatusOf' not in text:
+              text = text.replace(review_fn, helpers, 1)
+
+          # --- Add CSS classes for EM colors if previous workflow has not run yet. ---
+          css_old = '.ok{color:var(--green)}.warn{color:var(--amber)}'
+          css_new = '.ok{color:var(--green)}.warn{color:var(--amber)}.em-out{color:var(--green);font-weight:900}.em-near{color:var(--amber);font-weight:900}.em-in{color:var(--red);font-weight:900}'
+          if css_old in text and '.em-out{' not in text:
+              text = text.replace(css_old, css_new, 1)
+
+          # --- filters(): add IV Status and EM Status. ---
+          filters_old = "rankBy:$('rankBy').value,width:num($('spreadWidth').value)}"
+          filters_new = "rankBy:$('rankBy').value,ivStatus:$('ivStatusSel')?$('ivStatusSel').value:'Fair',emStatus:$('emStatusSel')?$('emStatusSel').value:'outside',width:num($('spreadWidth').value)}"
+          if filters_old in text and "emStatus:$('emStatusSel')" not in text:
+              text = text.replace(filters_old, filters_new, 1)
+          filters_old2 = "rankBy:$('rankBy').value,ivStatus:$('ivStatusSel')?$('ivStatusSel').value:'Fair',width:num($('spreadWidth').value)}"
+          filters_new2 = "rankBy:$('rankBy').value,ivStatus:$('ivStatusSel')?$('ivStatusSel').value:'Fair',emStatus:$('emStatusSel')?$('emStatusSel').value:'outside',width:num($('spreadWidth').value)}"
+          if filters_old2 in text and "emStatus:$('emStatusSel')" not in text:
+              text = text.replace(filters_old2, filters_new2, 1)
+
+          # --- apply(): add IV Status and EM Status filters. ---
+          apply_old = "rows=rows.filter(r=>sp(r)==null||sp(r)<=f.maxSpread);if(f.width)"
+          apply_new = "if(f.ivStatus)rows=rows.filter(r=>ivStatusOf(r)===f.ivStatus);if(f.emStatus)rows=rows.filter(r=>emPass(r,f.emStatus));rows=rows.filter(r=>sp(r)==null||sp(r)<=f.maxSpread);if(f.width)"
+          if apply_old in text and 'emPass(r,f.emStatus)' not in text:
+              text = text.replace(apply_old, apply_new, 1)
+
+          # --- render(): use color-coded EM Status and helper IV Status. ---
+          render_old = "<td>${e?e.status:'Verify'}</td><td>${num(r.iv)<=40?'Deflated':num(r.iv)<=60?'Fair':'Inflated'}</td>"
+          render_new = "<td class=\"${emClass(e?e.status:'Verify')}\">${e?e.status:'Verify'}</td><td>${ivStatusOf(r)}</td>"
+          if render_old in text:
+              text = text.replace(render_old, render_new, 1)
+          render_old2 = "<td class=\"${emClass(e?e.status:'Verify')}\">${e?e.status:'Verify'}</td><td>${num(r.iv)<=40?'Deflated':num(r.iv)<=60?'Fair':'Inflated'}</td>"
+          render_new2 = "<td class=\"${emClass(e?e.status:'Verify')}\">${e?e.status:'Verify'}</td><td>${ivStatusOf(r)}</td>"
+          if render_old2 in text:
+              text = text.replace(render_old2, render_new2, 1)
+
+          # --- render(): update diagnostics counts. ---
+          render_diag_marker = "$('candidateCount').textContent=lastRows.length;"
+          render_diag_patch = "$('candidateCount').textContent=lastRows.length;if($('diagMatches'))$('diagMatches').textContent=lastRows.length;if($('diagDisplayed'))$('diagDisplayed').textContent=lastRows.length;"
+          if render_diag_marker in text and "$('diagMatches')" not in text:
+              text = text.replace(render_diag_marker, render_diag_patch, 1)
+
+          # --- loadBoard(): populate diagnostics from backend fields when available. ---
+          load_marker = "$('truthUniverse').textContent=(data.universeCount||data.scanned||allRows.length)+' symbols';"
+          load_patch = load_marker + "if($('diagUniverse'))$('diagUniverse').textContent=data.universeCount||data.symbolsInUniverse||'—';if($('diagPulled'))$('diagPulled').textContent=data.symbolsPulledSuccessfully||data.scanned||'—';if($('diagContracts'))$('diagContracts').textContent=data.rawContractsStored||data.rawOptionContractsStored||'Verify';if($('diagCondors'))$('diagCondors').textContent=data.condorStructuresGenerated||data.withCondor||data.total||'—';"
+          if load_marker in text and "diagContracts" not in text:
+              text = text.replace(load_marker, load_patch, 1)
+
+          # --- sample fallback diagnostics. ---
+          sample_marker = "$('truthUniverse').textContent=allRows.length+' sample rows';"
+          sample_patch = sample_marker + "if($('diagUniverse'))$('diagUniverse').textContent=allRows.length+' sample';if($('diagPulled'))$('diagPulled').textContent=allRows.length+' sample';if($('diagContracts'))$('diagContracts').textContent='Sample only';if($('diagCondors'))$('diagCondors').textContent=allRows.length+' sample';"
+          if sample_marker in text and "' sample';if($('diagPulled'))" not in text:
+              text = text.replace(sample_marker, sample_patch, 1)
+
+          # --- reset defaults: IV Fair, EM Outside, DTE static 15-45. ---
+          reset_old = "$('ivMin').value='30';$('minOI').value='10000';"
+          reset_new = "$('ivMin').value='30';if($('ivStatusSel'))$('ivStatusSel').value='Fair';if($('emStatusSel'))$('emStatusSel').value='outside';$('dteWindow').value='15-45';$('minOI').value='10000';"
+          if reset_old in text and "$('emStatusSel')" not in text:
+              text = text.replace(reset_old, reset_new, 1)
+          reset_old2 = "$('ivMin').value='30';if($('ivStatusSel'))$('ivStatusSel').value='Fair';$('minOI').value='10000';"
+          reset_new2 = "$('ivMin').value='30';if($('ivStatusSel'))$('ivStatusSel').value='Fair';if($('emStatusSel'))$('emStatusSel').value='outside';$('dteWindow').value='15-45';$('minOI').value='10000';"
+          if reset_old2 in text and "$('emStatusSel')" not in text:
+              text = text.replace(reset_old2, reset_new2, 1)
+
+          # --- event listeners: include new dropdowns and CSV button. ---
+          listener_old = "'rankBy','rocMin','rocMax','minProb','ivMin','minOI'"
+          listener_new = "'rankBy','ivStatusSel','emStatusSel','rocMin','rocMax','minProb','ivMin','minOI'"
+          if listener_old in text and "'emStatusSel'" not in text:
+              text = text.replace(listener_old, listener_new, 1)
+          listener_old2 = "'rankBy','ivStatusSel','rocMin','rocMax','minProb','ivMin','minOI'"
+          listener_new2 = "'rankBy','ivStatusSel','emStatusSel','rocMin','rocMax','minProb','ivMin','minOI'"
+          if listener_old2 in text and "'emStatusSel'" not in text:
+              text = text.replace(listener_old2, listener_new2, 1)
+
+          # --- CSV export function with expanded columns. ---
+          csv_fn = "function downloadCsv(){let heads=['Symbol','Directional Bias','Short Put Strike','Short Put Bid','Short Put Ask','Short Put Mid','Short Call Strike','Short Call Bid','Short Call Ask','Short Call Mid','Long Put Strike','Long Call Strike','Net Credit Bid-Based','Net Credit Mid-Based','Monthly Chain IV','Monthly Chain IV Source','Monthly Chain IV Method','Data Mode','Scan Timestamp'];let rows=[heads,...lastRows.map(r=>[r.symbol,r.directionalBias||r.bias||'Verify',r.putSell||'',r.shortPutBid||'',r.shortPutAsk||'',r.shortPutMid||'',r.callSell||'',r.shortCallBid||'',r.shortCallAsk||'',r.shortCallMid||'',r.putBuy||'',r.callBuy||'',r.netCreditBidBased||r.credit||'',r.netCreditMidBased||r.credit||'',r.monthlyChainIV||r.iv||'',r.monthlyChainIVSource||'CBOE-derived / verify',r.monthlyChainIVMethod||'Preview display; backend method required',document.getElementById('truthDataMode')?document.getElementById('truthDataMode').textContent:'',document.getElementById('truthLastScan')?document.getElementById('truthLastScan').textContent:''] )];let csv=rows.map(row=>row.map(v=>'\"'+String(v??'').replaceAll('\\\"','\\\"\\\"')+'\"').join(',')).join('\\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='poppas-v3-preview-expanded.csv';a.click()}"
+          if 'function downloadCsv()' not in text:
+              text = text.replace("function resetDefaults(){", csv_fn + "function resetDefaults(){", 1)
+          bind_marker = "$('resetBtn').onclick=resetDefaults;"
+          bind_patch = "$('resetBtn').onclick=resetDefaults;if($('downloadCsvBtn'))$('downloadCsvBtn').onclick=downloadCsv;"
+          if bind_marker in text and "downloadCsvBtn" not in text.split(bind_marker)[-1][:200]:
+              text = text.replace(bind_marker, bind_patch, 1)
+
+          if text == original:
+              print('No changes needed or markers not found.')
+          else:
+              path.write_text(text, encoding='utf-8')
+              print('Version 3 preview-page patch applied.')
+          PY
+
+      - name: Commit patch if changed
+        run: |
+          if git diff --quiet; then
+            echo "No file changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scanner-table-preview.html
+          git commit -m "Apply Version 3 preview page changes"
+          git push
