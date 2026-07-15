@@ -47,6 +47,28 @@ function pacificParts(now = new Date()) {
   };
 }
 
+function pacificWeekday(now = new Date()) {
+  return new Intl.DateTimeFormat("en-US", { timeZone: PACIFIC_TIME_ZONE, weekday: "short" }).format(now);
+}
+
+function withinPacificRange({ startHour, startMinute, endHour, endMinute }, now = new Date()) {
+  if (process.env.POPPA_SCHEDULE_FORCE === "true") {
+    return { ok: true, forced: true, reason: "POPPA_SCHEDULE_FORCE=true", pacific: pacificParts(now) };
+  }
+  const pacific = pacificParts(now);
+  const weekday = pacificWeekday(now);
+  const minutes = pacific.hour * 60 + pacific.minute;
+  const isWeekday = !["Sat", "Sun"].includes(weekday);
+  const inRange = minutes >= startHour * 60 + startMinute && minutes <= endHour * 60 + endMinute;
+  return {
+    ok: isWeekday && inRange,
+    forced: false,
+    weekday,
+    range: `${String(startHour).padStart(2, "0")}:${String(startMinute).padStart(2, "0")}–${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")} PT Mon–Fri`,
+    pacific
+  };
+}
+
 function withinPacificWindow({ targetHour, targetMinute, guardMinutes }, now = new Date()) {
   if (process.env.POPPA_SCHEDULE_FORCE === "true") {
     return { ok: true, forced: true, reason: "POPPA_SCHEDULE_FORCE=true", pacific: pacificParts(now) };
@@ -119,6 +141,20 @@ export async function runScheduledPullTask(config) {
   const retiredResponse = retired(cycle);
   if (retiredResponse) return retiredResponse;
   const guard = withinPacificWindow(config);
+  if (!guard.ok) return json({ ok: true, skipped: true, cycle, guard, storagePath: "supabase-source-of-truth" });
+  try {
+    const dispatch = await dispatchSupabaseSchwabScan(cycle);
+    return json({ ok: dispatch.dispatched, cycle, guard, dispatch, storagePath: "supabase-source-of-truth", blobUsed: false }, dispatch.dispatched ? 200 : 502);
+  } catch (error) {
+    return json({ ok: false, cycle, error: error.message || String(error), blobUsed: false }, 500);
+  }
+}
+
+export async function runScheduledIntradayPullTask(config) {
+  const cycle = config.cycle || "scheduled-intraday-pull";
+  const retiredResponse = retired(cycle);
+  if (retiredResponse) return retiredResponse;
+  const guard = withinPacificRange(config);
   if (!guard.ok) return json({ ok: true, skipped: true, cycle, guard, storagePath: "supabase-source-of-truth" });
   try {
     const dispatch = await dispatchSupabaseSchwabScan(cycle);
