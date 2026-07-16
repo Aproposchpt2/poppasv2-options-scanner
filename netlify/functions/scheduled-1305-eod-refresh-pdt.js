@@ -1,15 +1,3 @@
-// POPPA'S scheduled EOD refresh wrapper — 3:30 PM Pacific during PDT.
-// Netlify cron runs in UTC: 22:30 UTC = 3:30 PM PDT.
-
-import { runScheduledCleanupAndPullTask } from "../shared/scheduled-scan-cycle.js";
-
-export default async () => runScheduledCleanupAndPullTask({
-  cycle: "1530-pt-eod-cleanup-and-schwab-pull",
-  targetHour: 15,
-  targetMinute: 30,
-  guardMinutes: 8
-});
-
-export const config = {
-  schedule: "30 22 * * *"
-};
+// Retired 2026-07-15 — consolidated into the 7:00/11:00/3:00 PM Pacific pull schedule.
+// See scheduled-1500-pull-pdt.js.
+export default async () => new Response(null, { status: 204 });
