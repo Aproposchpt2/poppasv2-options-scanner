@@ -122,6 +122,12 @@ async function dispatchSupabaseSchwabScan(cycle) {
   return result;
 }
 
+async function dispatchBiasRefresh(cycle) {
+  const result = await dispatchEndpoint("/.netlify/functions/bias-build-db-background", cycle);
+  logPayload(result.dispatched ? "info" : "warn", { event: "directional-bias-refresh-dispatched", cycle, ...result });
+  return result;
+}
+
 export async function runScheduledCleanupTask(config) {
   const cycle = config.cycle || "scheduled-cleanup";
   const retiredResponse = retired(cycle);
@@ -175,6 +181,20 @@ export async function runScheduledCleanupAndPullTask(config) {
     if (!cleanup.dispatched) return json({ ok: false, cycle, guard, cleanup, storagePath: "supabase-source-of-truth", blobUsed: false }, 502);
     const dispatch = await dispatchSupabaseSchwabScan(cycle);
     return json({ ok: dispatch.dispatched, cycle, guard, cleanup, dispatch, storagePath: "supabase-source-of-truth", blobUsed: false }, dispatch.dispatched ? 200 : 502);
+  } catch (error) {
+    return json({ ok: false, cycle, error: error.message || String(error), blobUsed: false }, 500);
+  }
+}
+
+export async function runScheduledBiasRefreshTask(config) {
+  const cycle = config.cycle || "scheduled-bias-refresh";
+  const retiredResponse = retired(cycle);
+  if (retiredResponse) return retiredResponse;
+  const guard = withinPacificWindow(config);
+  if (!guard.ok) return json({ ok: true, skipped: true, cycle, guard, storagePath: "supabase-source-of-truth" });
+  try {
+    const dispatch = await dispatchBiasRefresh(cycle);
+    return json({ ok: dispatch.dispatched, cycle, guard, dispatch, storagePath: "supabase-source-of-truth", blobUsed: false }, dispatch.dispatched ? 200 : 502);
   } catch (error) {
     return json({ ok: false, cycle, error: error.message || String(error), blobUsed: false }, 500);
   }

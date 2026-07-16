@@ -3,23 +3,15 @@
 // Backend ingestion rule: monthly third-Friday expirations only, DTE 0-45 only (temporary validation window).
 // Scanner/Band Intake filters remain in scan-results-db.js.
 
+import { loadUniverse } from "../shared/universe.js";
+
 const CHUNK = 24;
 const CONCURRENCY = 4;
 const MAX_RUN_MS = 55 * 1000;
-const SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";
 const STRATEGY = "SP500_Tight_Condor_Scan_v3_SchwabLive";
 const SCAN_MODE = "Schwab live · Monthly option chain only · 0-45 DTE · Supabase persistence";
 const DATA_SOURCE = "Schwab/TOS Market Data API; ingestion extracts monthly option-chain records with 0-45 DTE only using Pacific market-date calculation. All other filters are user Band Intake controls.";
 const UPSTREAM_FILTERS_ONLY = ["Schwab live option chain", "Monthly third-Friday expiration", "0-45 DTE", "Duplicate structural record removal"];
-
-const CURATED = [
-  ["SPY","SPDR S&P 500 ETF","ETF","both"], ["QQQ","Invesco QQQ Trust","ETF","both"],
-  ["NVDA","NVIDIA","Technology","both"],["TSLA","Tesla","Consumer Disc.","both"],["AMD","Advanced Micro Devices","Technology","both"],
-  ["AAPL","Apple","Technology","both"],["MSFT","Microsoft","Technology","both"],["META","Meta Platforms","Communications","both"],
-  ["AMZN","Amazon","Consumer Disc.","both"],["GOOGL","Alphabet","Communications","both"],["AVGO","Broadcom","Technology","both"],
-  ["NFLX","Netflix","Communications","both"],["MU","Micron","Technology","both"],["QCOM","Qualcomm","Technology","both"],
-  ["COST","Costco","Consumer Staples","both"],["COIN","Coinbase","Financials","both"],["MSTR","Strategy","Technology","ndx"]
-];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const hasNum = v => Number.isFinite(Number(v));
@@ -59,31 +51,6 @@ async function sbCount(table, filter = "") {
   const cr = headers.get("content-range") || "";
   const m = cr.match(/\/(\d+)$/);
   return m ? Number(m[1]) : 0;
-}
-
-function parseCsvLine(ln) {
-  const r = []; let cur = "", q = false;
-  for (const ch of ln) { if (ch === '"') q = !q; else if (ch === "," && !q) { r.push(cur); cur = ""; } else cur += ch; }
-  r.push(cur); return r;
-}
-
-async function loadUniverse() {
-  try {
-    const r = await fetch(SP500_CSV);
-    if (!r.ok) throw new Error("csv " + r.status);
-    const lines = (await r.text()).split(/\r?\n/).filter(Boolean);
-    lines.shift();
-    const seen = new Set(), uni = [];
-    for (const c of CURATED) { uni.push(c); seen.add(c[0]); }
-    for (const ln of lines) {
-      const f = parseCsvLine(ln);
-      const sym = (f[0] || "").trim().toUpperCase();
-      if (!sym || sym.includes(".") || seen.has(sym)) continue;
-      seen.add(sym);
-      uni.push([sym, (f[1] || sym).trim(), (f[2] || "S&P 500").trim(), "sp"]);
-    }
-    return uni;
-  } catch (_) { return CURATED; }
 }
 
 async function loadEarnings(days = 90) {
