@@ -53,21 +53,37 @@ async function sbCount(table, filter = "") {
   return m ? Number(m[1]) : 0;
 }
 
-async function loadEarnings(days = 90) {
-  const map = {}, base = Date.now(), queue = [];
-  for (let i = 0; i <= days; i++) queue.push(pacificDateString(i, base));
+// Builds two maps from Nasdaq's public earnings calendar:
+//  - future[sym]: earliest confirmed report date >= today, within `daysForward` days
+//  - past[sym]:   most recent confirmed report date < today, within `daysBack` days
+// `past` has no confirmed forward date attached to it — it exists only so callers can
+// project an *estimated* next report date (~91-day quarterly cadence) when Nasdaq hasn't
+// published the upcoming date yet. Any single day's fetch failure is swallowed (queue
+// worker pattern) since this is a best-effort calendar sweep, not a required dependency.
+async function loadEarnings(daysForward = 90, daysBack = 100) {
+  const future = {}, past = {}, base = Date.now(), queue = [];
+  const todayForEarnings = pacificDateString(0, base);
+  for (let i = -daysBack; i <= daysForward; i++) queue.push(pacificDateString(i, base));
   async function worker() {
     while (queue.length) {
       const d = queue.shift();
       const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 8000);
       try {
         const r = await fetch("https://api.nasdaq.com/api/calendar/earnings?date=" + d, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json, text/plain, */*" }, signal: ctrl.signal });
-        if (r.ok) { const j = await r.json(); for (const row of ((j.data && j.data.rows) || [])) { const s = (row.symbol || "").toUpperCase().trim(); if (s && (!map[s] || d < map[s])) map[s] = d; } }
+        if (r.ok) {
+          const j = await r.json();
+          for (const row of ((j.data && j.data.rows) || [])) {
+            const s = (row.symbol || "").toUpperCase().trim();
+            if (!s) continue;
+            if (d >= todayForEarnings) { if (!future[s] || d < future[s]) future[s] = d; }
+            else { if (!past[s] || d > past[s]) past[s] = d; }
+          }
+        }
       } catch (_) {} finally { clearTimeout(t); }
     }
   }
   await Promise.all(Array.from({ length: 4 }, worker));
-  return map;
+  return { future, past };
 }
 
 function baseUrl(req) {
@@ -92,6 +108,12 @@ function pacificDateString(addDays = 0, baseMs = Date.now()) {
 }
 
 function offsetDate(days) { return pacificDateString(days); }
+
+function addDaysToDateString(dateStr, days) {
+  const [y, m, d] = String(dateStr || "").slice(0, 10).split("-").map(Number);
+  if (![y, m, d].every(Number.isFinite)) return null;
+  return ymdFromDate(new Date(Date.UTC(y, m - 1, d + Number(days || 0))));
+}
 
 function dteOf(expiry) {
   if (!expiry) return null;
@@ -186,10 +208,17 @@ function expectedMoveFields(spot, iv, dte, shortPut, shortCall) {
 }
 
 function qualityScore(x) {
-  return [x.roc >= 5 && x.roc <= 10, x.probOtm >= 0.90, x.iv >= 30, x.monthlyOI >= 10000, x.shortPutOI >= 1 && x.shortCallOI >= 1, x.spreadMax <= 0.25, !x.earnInWindow, x.expectedMoveStatus === "Outside EM", x.credit > 0, x.width > 0].filter(Boolean).length;
+  return [x.roc >= 5 && x.roc <= 10, x.probOtm >= 0.90, x.iv >= 30, x.monthlyOI >= 10000, x.shortPutOI >= 1 && x.shortCallOI >= 1, x.spreadMax <= 0.25, !x.earningsRisk, x.expectedMoveStatus === "Outside EM", x.credit > 0, x.width > 0].filter(Boolean).length;
 }
 
-function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = "") {
+// Estimated-earnings caution margin: real quarterly report dates commonly drift ±1-2 weeks
+// off a clean 91-day cycle, and a false "no earnings risk" is the dangerous direction here
+// (it would let an earnings-week trade through unflagged). So the projected date is checked
+// against the candidate's expiry PLUS this margin, biasing toward flagging risk when unsure.
+const EARNINGS_ESTIMATE_CADENCE_DAYS = 91;
+const EARNINGS_ESTIMATE_CAUTION_DAYS = 10;
+
+function scanAll(chain, sym, name, sector, market, earningsMaps = {}, todayStr = "") {
   const monthly = schwabOptionRows(chain);
   if (!monthly.length) return [];
   const spot = monthly[0].spot;
@@ -200,8 +229,21 @@ function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = 
     const monthlyOI = set.reduce((s, o) => s + (num(o.openInterest) || 0), 0);
     const calls = set.filter(o => o.type === "C" && o.strike > spot && (1 - Math.abs(num(o.delta) || 0)) >= 0.70).sort((a,b) => a.strike - b.strike);
     const puts = set.filter(o => o.type === "P" && o.strike < spot && (1 - Math.abs(num(o.delta) || 0)) >= 0.70).sort((a,b) => b.strike - a.strike);
-    const erDate = earningsMap[sym] || null;
+    const erDate = earningsMaps.future?.[sym] || null;
     const earnInWindow = !!(erDate && erDate >= todayStr && erDate <= ek);
+    // No Nasdaq-confirmed forward date — project one from the most recent known report
+    // (last + ~91 days) and check whether that estimate falls within this candidate's
+    // window, widened by the caution margin above.
+    let estimatedNextEarnings = null, earningsEstimated = false;
+    if (!erDate) {
+      const lastDate = earningsMaps.past?.[sym] || null;
+      if (lastDate) {
+        estimatedNextEarnings = addDaysToDateString(lastDate, EARNINGS_ESTIMATE_CADENCE_DAYS);
+        const cautionEk = addDaysToDateString(ek, EARNINGS_ESTIMATE_CAUTION_DAYS);
+        earningsEstimated = !!(estimatedNextEarnings && estimatedNextEarnings >= todayStr && estimatedNextEarnings <= cautionEk);
+      }
+    }
+    const earningsRisk = earnInWindow || earningsEstimated;
     for (const widthTarget of widthsFor(spot)) {
       const putStructures = [], callStructures = [];
       for (const sp of puts) { const lp = nearestByStrike(set, "P", sp.strike - widthTarget); if (lp && lp.strike < sp.strike) putStructures.push({ sp, lp }); }
@@ -225,8 +267,8 @@ function scanAll(chain, sym, name, sector, market, earningsMap = {}, todayStr = 
         const shortPutOI = num(sp.openInterest) || 0, shortCallOI = num(sc.openInterest) || 0;
         const longPutOI = num(lp.openInterest) || 0, longCallOI = num(lc.openInterest) || 0;
         const em = expectedMoveFields(spot, iv, sc.dte, sp.strike, sc.strike);
-        const score = qualityScore({ roc, probOtm, iv, monthlyOI, shortPutOI, shortCallOI, spreadMax, earnInWindow, expectedMoveStatus: em.expectedMoveStatus, credit, width });
-        widthOut.push({ symbol: sym, name, sector, market: market || "both", spot: round2(spot), iv: round2(iv), hv: round2(iv), dte: sc.dte, expiry: ek, earnings: earnInWindow, earnings_date: earnInWindow ? erDate : null, next_earnings: erDate, short_put: sp.strike, long_put: lp.strike, short_call: sc.strike, long_call: lc.strike, credit, mid_credit: midCredit, width, max_risk: maxRisk, roc, prob_otm: probOtm, put_prob_otm: putProbOtm, call_prob_otm: callProbOtm, short_delta: +Math.max(putDelta, callDelta).toFixed(3), open_interest: monthlyOI, short_put_oi: shortPutOI, short_call_oi: shortCallOI, long_put_oi: longPutOI, long_call_oi: longCallOI, spread_max: spreadMax, expected_move: em.expectedMove, expected_low: em.expectedLow, expected_high: em.expectedHigh, expected_move_status: em.expectedMoveStatus, passed: true, score, review_status: "Raw Schwab monthly-chain candidate — apply Band Intake filters", note: "Raw Schwab candidate. User Band Intake values determine display eligibility.", raw_chain_eligible: true, raw_chain_rule: "Schwab live monthly third-Friday expiration, 0-45 DTE only using Pacific market date", source_payload: { symbol: sym, option_put_short: sp.option, option_put_long: lp.option, option_call_short: sc.option, option_call_long: lc.option, schwab_dte_put: sp.schwabDaysToExpiration, schwab_dte_call: sc.schwabDaysToExpiration } });
+        const score = qualityScore({ roc, probOtm, iv, monthlyOI, shortPutOI, shortCallOI, spreadMax, earningsRisk, expectedMoveStatus: em.expectedMoveStatus, credit, width });
+        widthOut.push({ symbol: sym, name, sector, market: market || "both", spot: round2(spot), iv: round2(iv), hv: round2(iv), dte: sc.dte, expiry: ek, earnings: earnInWindow, earnings_date: earnInWindow ? erDate : null, next_earnings: erDate, earnings_estimated: earningsEstimated, estimated_next_earnings: estimatedNextEarnings, short_put: sp.strike, long_put: lp.strike, short_call: sc.strike, long_call: lc.strike, credit, mid_credit: midCredit, width, max_risk: maxRisk, roc, prob_otm: probOtm, put_prob_otm: putProbOtm, call_prob_otm: callProbOtm, short_delta: +Math.max(putDelta, callDelta).toFixed(3), open_interest: monthlyOI, short_put_oi: shortPutOI, short_call_oi: shortCallOI, long_put_oi: longPutOI, long_call_oi: longCallOI, spread_max: spreadMax, expected_move: em.expectedMove, expected_low: em.expectedLow, expected_high: em.expectedHigh, expected_move_status: em.expectedMoveStatus, passed: true, score, review_status: "Raw Schwab monthly-chain candidate — apply Band Intake filters", note: "Raw Schwab candidate. User Band Intake values determine display eligibility.", raw_chain_eligible: true, raw_chain_rule: "Schwab live monthly third-Friday expiration, 0-45 DTE only using Pacific market date", source_payload: { symbol: sym, option_put_short: sp.option, option_put_long: lp.option, option_call_short: sc.option, option_call_long: lc.option, schwab_dte_put: sp.schwabDaysToExpiration, schwab_dte_call: sc.schwabDaysToExpiration } });
       }
       // Dedup: keep the highest-score (Blueprint fit) condor per width,
       // then ROC as tiebreaker. Score counts Blueprint criteria met.
@@ -263,9 +305,18 @@ async function insertRows(scanRunId, rows) {
 
 async function candidateCount(scanRunId) { return sbCount("scan_candidates", `scan_run_id=eq.${encodeURIComponent(scanRunId)}`); }
 
+// Normalizes earnings data to the { future, past } shape. Runs created before the
+// earnings_estimated feature shipped stored a flat { symbol: date } map in metadata;
+// treat that as the future map with an empty past map rather than crash mid-run.
+function normalizeEarnings(earnings) {
+  if (!earnings) return null;
+  if (earnings.future || earnings.past) return { future: earnings.future || {}, past: earnings.past || {} };
+  return { future: earnings, past: {} };
+}
+
 async function createRun() {
   const universe = await loadUniverse();
-  const earnings = await loadEarnings(90);
+  const earnings = await loadEarnings(90, 100);
   const body = [{ strategy: STRATEGY, status: "running", scan_mode: SCAN_MODE, data_source: DATA_SOURCE, universe_count: universe.length, scanned_count: 0, candidate_count: 0, pass_count: 0, pending_index: 0, metadata: { universe, earnings, createdBy: "scan-build-db-schwab-live", backendFiltersRemoved: true, upstreamFiltersOnly: UPSTREAM_FILTERS_ONLY, marketDate: pacificDateString(0), fromDate: offsetDate(0), toDate: offsetDate(45), dteBasis: "America/Los_Angeles market date" } }];
   const { data } = await sbFetch("scan_runs?select=*", { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) });
   return data[0];
@@ -282,9 +333,9 @@ export default async (req) => {
   let run;
   try { run = await loadRun(restart); } catch (err) { return json({ ok: false, error: String(err?.message || err) }, 500); }
   let universe = Array.isArray(run.metadata?.universe) ? run.metadata.universe : null;
-  let earnings = run.metadata?.earnings || null;
+  let earnings = normalizeEarnings(run.metadata?.earnings);
   if (!universe) universe = await loadUniverse();
-  if (!earnings) earnings = await loadEarnings(90);
+  if (!earnings) earnings = await loadEarnings(90, 100);
   const todayStr = pacificDateString(0);
   let pending = Math.max(0, Number(run.pending_index || 0));
   let scanned = Math.max(0, Number(run.scanned_count || 0));
