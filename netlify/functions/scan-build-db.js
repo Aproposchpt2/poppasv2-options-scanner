@@ -369,7 +369,11 @@ export default async (req) => {
   const complete = pending >= total;
   if (!complete) {
     const base = baseUrl(req);
-    if (base) { try { fetch(`${base}/.netlify/functions/scan-build-db?continue=1&scanRunId=${encodeURIComponent(run.id)}`, { method: "POST" }); } catch (_) {} }
+    // Awaited so the continuation request is actually dispatched before this
+    // invocation's execution environment is frozen/torn down on return —
+    // previously fire-and-forget, which silently lost the race and stalled
+    // scans partway through the universe with no error ever logged.
+    if (base) { try { await fetch(`${base}/.netlify/functions/scan-build-db?continue=1&scanRunId=${encodeURIComponent(run.id)}`, { method: "POST" }); } catch (_) {} }
   }
   const count = await candidateCount(run.id);
   return json({ ok: true, scanRunId: run.id, status: complete ? "completed" : "running", scanned, total, pendingIndex: pending, candidateCount: count || 0, lastBatchRows, lastInsertedRows, batchesProcessed, backendFiltersRemoved: true, upstreamFiltersOnly: UPSTREAM_FILTERS_ONLY, dataSource: "Schwab/TOS Market Data API", marketDataOnly: true, tokenReturnedToFrontend: false, accountDataReturnedToFrontend: false, dteBasis: "America/Los_Angeles market date", marketDate: todayStr, fromDate: offsetDate(0), toDate: offsetDate(45), framework: "v3 Schwab live monthly-chain first · Supabase REST persistence" });

@@ -133,8 +133,14 @@ export default async (req) => {
     const base = baseUrl(req);
     if (!base) return json({ ok: false, error: "No base URL available to trigger scan-build-db." }, 500);
 
-    const qs = action === "restart" ? "?restart=1" : (action === "continue" ? "?continue=1" : "");
-    const endpoint = `${base}/.netlify/functions/scan-build-db${qs}`;
+    // Routed through the durable background orchestrator (scan-build-db-background)
+    // instead of calling scan-build-db directly. scan-build-db's own batch-to-batch
+    // continuation is a fire-and-forget fetch that can lose the race against its
+    // execution environment freezing on return — the orchestrator owns looping
+    // through the full universe within a real background-function execution budget
+    // and suppresses that legacy continuation call so it never double-fires.
+    const qs = action === "restart" ? "?restart=1" : (action === "continue" ? "?restart=0" : "");
+    const endpoint = `${base}/.netlify/functions/scan-build-db-background${qs}`;
     let trigger;
     try {
       const res = await fetch(endpoint, { method: "POST", headers: { accept: "application/json" } });
