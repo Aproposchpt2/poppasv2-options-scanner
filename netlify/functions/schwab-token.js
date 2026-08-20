@@ -121,9 +121,11 @@ async function readStoredTokenRecord() {
   }
 }
 
-async function writeStoredTokenRecord(existingRecord = {}, tokenResponse = {}) {
+async function writeStoredTokenRecord(existingRecord = {}, tokenResponse = {}, options = {}) {
   const receivedAt = new Date();
+  const receivedAtIso = receivedAt.toISOString();
   const expiresIn = Number(tokenResponse.expires_in || 0);
+  const fullAuthorization = options.fullAuthorization === true;
   const tokenRecord = {
     ...existingRecord,
     provider: "schwab",
@@ -133,7 +135,10 @@ async function writeStoredTokenRecord(existingRecord = {}, tokenResponse = {}) {
     refresh_token: tokenResponse.refresh_token || existingRecord.refresh_token || null,
     expires_in: tokenResponse.expires_in || existingRecord.expires_in || null,
     scope: tokenResponse.scope || existingRecord.scope || null,
-    received_at: receivedAt.toISOString(),
+    received_at: receivedAtIso,
+    authorization_received_at: fullAuthorization
+      ? receivedAtIso
+      : existingRecord.authorization_received_at || null,
     access_token_expires_at: expiresIn > 0 ? new Date(receivedAt.getTime() + expiresIn * 1000).toISOString() : null,
     tokenReturnedToFrontend: false,
     accountDataReturnedToFrontend: false
@@ -218,7 +223,7 @@ async function exchangeAuthorizationCode(code, setupSecret = "") {
     redirect_uri: getEnv("SCHWAB_REDIRECT_URI")
   });
 
-  await writeStoredTokenRecord({}, tokenResponse);
+  await writeStoredTokenRecord({}, tokenResponse, { fullAuthorization: true });
   return buildTokenResponsePayload(tokenResponse, setupSecret, "authorization_code", "schwab_token_exchange");
 }
 
