@@ -5,7 +5,7 @@ import { getStore } from "@netlify/blobs";
 // access token can refresh many times inside that window, so access-token
 // refresh timestamps must never reset the full-authorization age clock.
 
-export const config = { schedule: "0 14 * * *" }; // ~7 AM Pacific daily
+export const config = { schedule: "24 19 20 8 *" }; // Controlled recovery run: Aug 20 at 19:24 UTC
 
 const TOKEN_STORE_NAME = process.env.SCHWAB_TOKEN_STORE_NAME || "schwab-oauth";
 const TOKEN_STORE_KEY = process.env.SCHWAB_TOKEN_STORE_KEY || "latest-token";
