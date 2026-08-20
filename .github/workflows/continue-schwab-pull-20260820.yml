@@ -1,0 +1,27 @@
+name: Continue Schwab Pull 2026-08-20
+
+on:
+  pull_request:
+    types: [opened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  continue-schwab-pull:
+    if: github.head_ref == 'agent/continue-schwab-pull-20260820'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Continue production Schwab scan with durable orchestrator
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            'https://poppasv2.ai4academy.net/.netlify/functions/scan-build-db-background?restart=0&cycle=manual-recovery-20260820' \
+            | tee /tmp/continue.json
+          echo
+          jq . /tmp/continue.json
+          jq -e '.ok == true' /tmp/continue.json >/dev/null
