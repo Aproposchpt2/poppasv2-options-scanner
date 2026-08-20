@@ -158,6 +158,7 @@ async function exchangeAuthorizationCode(code, config) {
 
 async function storeTokenResponse(tokenResponse, sessionId = "") {
   const receivedAt = new Date();
+  const receivedAtIso = receivedAt.toISOString();
   const expiresIn = Number(tokenResponse.expires_in || 0);
   const tokenRecord = {
     provider: "schwab",
@@ -167,7 +168,8 @@ async function storeTokenResponse(tokenResponse, sessionId = "") {
     refresh_token: tokenResponse.refresh_token,
     expires_in: tokenResponse.expires_in,
     scope: tokenResponse.scope,
-    received_at: receivedAt.toISOString(),
+    received_at: receivedAtIso,
+    authorization_received_at: receivedAtIso,
     access_token_expires_at: expiresIn > 0 ? new Date(receivedAt.getTime() + expiresIn * 1000).toISOString() : null,
     session_id: sessionId || null,
     tokenReturnedToFrontend: false,
@@ -181,6 +183,7 @@ async function storeTokenResponse(tokenResponse, sessionId = "") {
     storeName: TOKEN_STORE_NAME,
     storeKey: TOKEN_STORE_KEY,
     receivedAt: tokenRecord.received_at,
+    authorizationReceivedAt: tokenRecord.authorization_received_at,
     accessTokenExpiresAt: tokenRecord.access_token_expires_at
   };
 }
@@ -252,7 +255,7 @@ export default async function handler(req) {
         `<h1>Schwab authorization complete</h1>
          <p><span class="ok">Status:</span> Authorization code exchanged successfully inside the backend callback window.</p>
          <p>The Schwab token response was stored server-side in the secure Netlify token store.</p>
-         <p><strong>Stored At:</strong> ${escapeHtml(storage.receivedAt)}</p>
+         <p><strong>Full Authorization Recorded At:</strong> ${escapeHtml(storage.authorizationReceivedAt)}</p>
          <p><strong>Access Token Expires At:</strong> ${escapeHtml(storage.accessTokenExpiresAt || "Not provided")}</p>
          <p>For security, this page does not display or return authorization codes, access tokens, refresh tokens, account data, balances, positions, orders, or trading data.</p>
          <p>Market-data-only rule remains active: do not authorize accounts, trading, balances, positions, orders, or ACCT_ACTIVITY.</p>`,
