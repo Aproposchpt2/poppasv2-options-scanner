@@ -1,0 +1,53 @@
+name: Manual Schwab Pull 2026-08-20
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  manual-schwab-pull:
+    if: contains(github.event.head_commit.message, '[RUN-MANUAL-SCHWAB-PULL-20260820]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Trigger production Schwab pull
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Triggering POPPA'S production Schwab morning-pull task..."
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            'https://poppasv2.ai4academy.net/.netlify/functions/schwab-morning-pull-task?source=manual-20260820' \
+            | tee /tmp/trigger.json
+          echo
+          jq . /tmp/trigger.json
+          jq -e '.ok == true' /tmp/trigger.json >/dev/null
+
+      - name: Poll production scan status
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 10
+          for attempt in $(seq 1 20); do
+            echo "Status poll ${attempt}/20"
+            curl --fail-with-body --silent --show-error \
+              'https://poppasv2.ai4academy.net/.netlify/functions/scan-status-db' \
+              -o /tmp/status.json
+            jq '{ok,scanRunId,status,startedAt,updatedAt,completedAt,universeCount,scannedCount,remainingSymbols,progressPercent,candidateCount,passCount,complete,error}' /tmp/status.json
+            jq -e '.ok == true' /tmp/status.json >/dev/null
+            if [ "$(jq -r '.complete // false' /tmp/status.json)" = "true" ]; then
+              echo "Production Schwab scan completed."
+              exit 0
+            fi
+            if [ "$(jq -r '.status // ""' /tmp/status.json)" = "failed" ]; then
+              echo "Production Schwab scan reported failed status."
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "Scan is still running after the polling window. Final observed state:"
+          jq . /tmp/status.json
+          exit 0
