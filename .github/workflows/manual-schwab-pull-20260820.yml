@@ -1,8 +1,7 @@
 name: Manual Schwab Pull 2026-08-20
 
 on:
-  pull_request:
-    types: [opened]
+  push:
     branches: [main]
 
 permissions:
@@ -10,7 +9,7 @@ permissions:
 
 jobs:
   manual-schwab-pull:
-    if: github.head_ref == 'agent/manual-schwab-pull-20260820'
+    if: contains(github.event.head_commit.message, '[RUN-MANUAL-SCHWAB-PULL-20260820]')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
