@@ -1,0 +1,57 @@
+name: Manual Schwab Diagnostic 2026-09-19
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  manual-schwab-diagnostic:
+    if: contains(github.event.head_commit.message, '[RUN-MANUAL-SCHWAB-DIAGNOSTIC-20260919]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Verify live Schwab authorization with SPY
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            'https://poppasv2.ai4academy.net/.netlify/functions/schwab-option-chain?symbol=SPY&includeRaw=false' \
+            -o /tmp/schwab.json
+          jq '{ok,endpoint,requestedSymbol,requestedAt,receivedAt,tokenMetadata,summary:{symbol:.summary.symbol,status:.summary.status,underlyingPrice:.summary.underlyingPrice,numberOfContracts:.summary.numberOfContracts}}' /tmp/schwab.json
+          jq -e '.ok == true and .summary.numberOfContracts > 0' /tmp/schwab.json >/dev/null
+
+      - name: Trigger clean manual Schwab pull
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            'https://poppasv2.ai4academy.net/.netlify/functions/schwab-morning-pull-task?source=manual-diagnostic-20260919' \
+            -o /tmp/trigger.json
+          jq . /tmp/trigger.json
+          jq -e '.ok == true' /tmp/trigger.json >/dev/null
+
+      - name: Poll production scan status
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 10
+          for attempt in $(seq 1 24); do
+            echo "Status poll ${attempt}/24"
+            curl --fail-with-body --silent --show-error \
+              'https://poppasv2.ai4academy.net/.netlify/functions/scan-status-db' \
+              -o /tmp/status.json
+            jq '{ok,scanRunId,status,startedAt,updatedAt,completedAt,universeCount,scannedCount,remainingSymbols,progressPercent,candidateCount,passCount,complete,error}' /tmp/status.json
+            jq -e '.ok == true' /tmp/status.json >/dev/null
+            if [ "$(jq -r '.complete // false' /tmp/status.json)" = "true" ]; then
+              exit 0
+            fi
+            if [ "$(jq -r '.status // ""' /tmp/status.json)" = "failed" ]; then
+              exit 1
+            fi
+            sleep 30
+          done
+          exit 0
