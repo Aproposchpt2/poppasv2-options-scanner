@@ -179,7 +179,9 @@ async function fetchSchwabChain(req, sym) {
   u.searchParams.set("includeRaw", "true");
   const r = await fetch(u.toString(), { method: "GET", headers: { accept: "application/json" } });
   const body = await r.json().catch(() => null);
-  if (!r.ok || !body?.ok || !body?.rawOptionChain) return null;
+  if (!r.ok || !body?.ok || !body?.rawOptionChain) {
+    throw new Error(`Schwab option-chain retrieval failed for ${sym}: HTTP ${r.status}; API ok=${body?.ok === true}; raw chain present=${Boolean(body?.rawOptionChain)}. Scan stopped to avoid false completed status.`);
+  }
   return body.rawOptionChain;
 }
 
